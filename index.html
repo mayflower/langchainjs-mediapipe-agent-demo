@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>MediaPipe LangChain Agent Demo</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="panel intro">
+        <p class="eyebrow">Local Demo</p>
+        <h1>Gemma 4 Agent</h1>
+        <p class="lede">
+          Browser-only LangChain agent running on top of
+          <code>@langchain/community/chat_models/mediapipe_genai</code>.
+        </p>
+
+        <dl class="facts">
+          <div>
+            <dt>Model</dt>
+            <dd><code>gemma-4-E2B-it-web.task</code></dd>
+          </div>
+          <div>
+            <dt>WASM Root</dt>
+            <dd><code>/vendor/mediapipe/tasks-genai/wasm</code></dd>
+          </div>
+          <div>
+            <dt>Model Path</dt>
+            <dd><code>/models/gemma/gemma-4-E2B-it-web.task</code></dd>
+          </div>
+          <div>
+            <dt>Sampling</dt>
+            <dd><code>2048 / topK 40 / temp 0.2 / seed 101</code></dd>
+          </div>
+          <div>
+            <dt>Agent Stack</dt>
+            <dd><code>@langchain/classic/agents</code></dd>
+          </div>
+        </dl>
+
+        <button id="init-button" class="primary">Initialize Model</button>
+        <p id="status" class="status">Idle.</p>
+      </aside>
+
+      <main class="panel workspace">
+        <section id="transcript" class="transcript" aria-live="polite">
+          <article class="message system">
+            <h2>System</h2>
+            <p>
+              Initialize the model, then ask for weather, time, or math. The
+              agent runs locally in the browser and decides when to call tools.
+            </p>
+          </article>
+        </section>
+
+        <section class="composer">
+          <label class="composer-label" for="prompt-input">Message</label>
+          <textarea
+            id="prompt-input"
+            rows="4"
+            placeholder="Example: What's the weather and local time in Berlin, and what is 17 * 6?"
+          ></textarea>
+          <div class="actions">
+            <button id="send-button" class="primary" disabled>Run Agent</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
