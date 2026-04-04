@@ -30,23 +30,13 @@ pnpm install
 pnpm run sync:assets
 ```
 
-3. Download the Gemma 4 web model from:
-
-- [litert-community/gemma-4-E2B-it-litert-lm](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm)
-
-4. Place the model file here:
-
-```text
-public/models/gemma/gemma-4-E2B-it-web.task
-```
-
-5. Start the demo:
+3. Start the demo:
 
 ```bash
 pnpm start
 ```
 
-6. Open [http://127.0.0.1:4173](http://127.0.0.1:4173).
+4. Open [http://127.0.0.1:4173](http://127.0.0.1:4173).
 
 ## Runtime profile
 
@@ -64,4 +54,5 @@ The demo uses:
 - The app runs fully in the browser. The dev server only serves files.
 - LangSmith is intentionally shimmed out for the demo.
 - The weather tool uses live Open-Meteo browser fetches.
-- The model file is not committed to this repository.
+- The repository includes `public/models/gemma/gemma-4-E2B-it-web.task`.
+- `Dockerfile` builds a static image, and `deploy/helm/deepagents` contains the chart used for Kubernetes deployment.

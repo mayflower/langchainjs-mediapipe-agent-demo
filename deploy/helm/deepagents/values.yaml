@@ -1,0 +1,42 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/mayflower/langchainjs-mediapipe-agent-demo
+  tag: main
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: github-registry
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: deepagents.data.mayflower.tech
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    enabled: true
+    secretName: deepagents-tls
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  fsGroup: 101
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  allowPrivilegeEscalation: false
