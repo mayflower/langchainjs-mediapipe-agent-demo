@@ -16,7 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
+
+      - name: Download Gemma web model
+        run: |
+          mkdir -p public/models/gemma
+          rm -f public/models/gemma/gemma-4-E2B-it-web.task
+          curl -L --fail --output public/models/gemma/gemma-4-E2B-it-web.task \
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task?download=true"
 
       - uses: docker/setup-buildx-action@v3
 
