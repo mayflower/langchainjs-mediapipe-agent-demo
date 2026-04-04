@@ -95,7 +95,7 @@ export class Gemma4Codec {
 
       if (message._getType() !== "ai") {
         const contentParts = getMessageContentParts(message);
-        if (contentParts.mediaParts.length > 0) {
+        if (contentParts.hasMedia) {
           hasMedia = true;
           sections.push(
             renderMultimodalTurn(getNormalizedRole(message), contentParts)
@@ -220,13 +220,15 @@ function renderMultimodalTurn(
   role: "system" | "user" | "model",
   contentParts: MessageContentParts
 ): RenderedPromptPart[] {
-  const parts: RenderedPromptPart[] = [
-    `${GEMMA_TURN_OPEN}${role}\n${contentParts.text}`,
-  ];
-  for (const media of contentParts.mediaParts) {
-    parts.push(media);
+  const parts: RenderedPromptPart[] = [`${GEMMA_TURN_OPEN}${role}\n`];
+  for (const part of contentParts.orderedParts) {
+    if (typeof part === "string") {
+      appendText(parts, part);
+    } else {
+      parts.push(part);
+    }
   }
-  parts.push(`\n${GEMMA_TURN_CLOSE}`);
+  appendText(parts, `\n${GEMMA_TURN_CLOSE}`);
   return parts;
 }
 

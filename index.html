@@ -42,8 +42,43 @@
           </div>
         </dl>
 
-        <button id="init-button" class="primary">Initialize Model</button>
+        <div class="controls">
+          <button id="init-button" class="primary">Initialize Model</button>
+          <button id="reset-button" class="secondary" disabled>
+            Reset State
+          </button>
+        </div>
         <p id="status" class="status">Idle.</p>
+
+        <section class="diagnostics" aria-labelledby="diagnostics-heading">
+          <div class="diagnostics-header">
+            <h2 id="diagnostics-heading">Runtime Diagnostics</h2>
+            <p>Initialization state is updated live while the browser loads the model.</p>
+          </div>
+
+          <dl class="diagnostics-grid">
+            <div>
+              <dt>Model URL</dt>
+              <dd id="diag-model-url"><code>unresolved</code></dd>
+            </div>
+            <div>
+              <dt>WASM Root</dt>
+              <dd id="diag-wasm-root"><code>/vendor/mediapipe/tasks-genai/wasm</code></dd>
+            </div>
+            <div>
+              <dt>WebGPU</dt>
+              <dd id="diag-webgpu"><code>unchecked</code></dd>
+            </div>
+            <div>
+              <dt>Adapter</dt>
+              <dd id="diag-adapter"><code>unchecked</code></dd>
+            </div>
+            <div>
+              <dt>Stage</dt>
+              <dd id="diag-stage"><code>idle</code></dd>
+            </div>
+          </dl>
+        </section>
       </aside>
 
       <main class="panel workspace">

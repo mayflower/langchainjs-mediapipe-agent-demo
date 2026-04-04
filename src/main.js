@@ -8,20 +8,42 @@ import { ChatMediaPipeGenAI } from "./vendor/langchain-community/chat_models/med
 import { z } from "zod";
 
 const initButton = document.getElementById("init-button");
+const resetButton = document.getElementById("reset-button");
 const sendButton = document.getElementById("send-button");
 const promptInput = document.getElementById("prompt-input");
 const statusNode = document.getElementById("status");
 const transcript = document.getElementById("transcript");
+const diagnosticsNodes = {
+  modelUrl: document.getElementById("diag-model-url"),
+  wasmRoot: document.getElementById("diag-wasm-root"),
+  webgpu: document.getElementById("diag-webgpu"),
+  adapter: document.getElementById("diag-adapter"),
+  stage: document.getElementById("diag-stage"),
+};
 
 let agentExecutor = null;
 let model = null;
 let isInitializing = false;
 let isRunning = false;
+let initAttemptId = 0;
+let initLongLoadTimer = null;
+let initTimeoutTimer = null;
 
+const WASM_ROOT = "/vendor/mediapipe/tasks-genai/wasm";
+const INIT_LONG_LOAD_MS = 20_000;
+const INIT_TIMEOUT_MS = 180_000;
 const MODEL_ASSET_PATH_CANDIDATES = [
   "/models/gemma/gemma-4-E2B-it-web.task",
   "/models/gemma-4-E2B-it-web.task",
 ];
+const WASM_ENTRYPOINT = `${WASM_ROOT}/genai_wasm_internal.js`;
+const diagnostics = {
+  modelUrl: "unresolved",
+  wasmRoot: WASM_ROOT,
+  webgpu: "unchecked",
+  adapter: "unchecked",
+  stage: "idle",
+};
 
 function formatBytes(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -256,10 +278,88 @@ function setStatus(text, mode = "idle") {
   statusNode.dataset.mode = mode;
 }
 
+function setDiagnostic(key, value) {
+  diagnostics[key] = value;
+  diagnosticsNodes[key].textContent = value;
+}
+
+function clearInitTimers() {
+  if (initLongLoadTimer !== null) {
+    clearTimeout(initLongLoadTimer);
+    initLongLoadTimer = null;
+  }
+
+  if (initTimeoutTimer !== null) {
+    clearTimeout(initTimeoutTimer);
+    initTimeoutTimer = null;
+  }
+}
+
+function clearLongLoadTimer() {
+  if (initLongLoadTimer !== null) {
+    clearTimeout(initLongLoadTimer);
+    initLongLoadTimer = null;
+  }
+}
+
+function resetDemoState(options = {}) {
+  const { announce = false } = options;
+  initAttemptId += 1;
+  clearInitTimers();
+  model = null;
+  agentExecutor = null;
+  isInitializing = false;
+  isRunning = false;
+  setStatus("Idle.", "idle");
+  setDiagnostic("modelUrl", "unresolved");
+  setDiagnostic("wasmRoot", WASM_ROOT);
+  setDiagnostic("webgpu", "unchecked");
+  setDiagnostic("adapter", "unchecked");
+  setDiagnostic("stage", "idle");
+  if (announce) {
+    appendMessage(
+      "system",
+      "Reset",
+      "Local model state was cleared. You can initialize again without reloading the page."
+    );
+  }
+  syncUi();
+}
+
 function syncUi() {
   initButton.disabled = isInitializing || model !== null;
+  resetButton.disabled =
+    isRunning ||
+    (!isInitializing &&
+      model === null &&
+      agentExecutor === null &&
+      statusNode.dataset.mode !== "error" &&
+      diagnostics.stage === "idle");
   sendButton.disabled = isInitializing || isRunning || agentExecutor === null;
   promptInput.disabled = isInitializing || isRunning || agentExecutor === null;
+}
+
+async function resolveWasmAsset() {
+  const response = await fetch(WASM_ENTRYPOINT, {
+    method: "HEAD",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `MediaPipe runtime asset check failed for ${WASM_ENTRYPOINT} with ${response.status} ${response.statusText}.`
+    );
+  }
+
+  const contentType = response.headers.get("content-type") ?? "unknown content type";
+  if (contentType.toLowerCase().includes("text/html")) {
+    throw new Error(
+      `MediaPipe runtime asset check failed for ${WASM_ENTRYPOINT}: the server returned HTML instead of JavaScript.`
+    );
+  }
+
+  return {
+    path: WASM_ENTRYPOINT,
+    contentType,
+  };
 }
 
 async function resolveModelAssetPath() {
@@ -289,9 +389,112 @@ async function resolveModelAssetPath() {
   );
 }
 
-async function buildAgent() {
+async function runRuntimeCompatibilityPreflight() {
+  setDiagnostic("stage", "runtime preflight");
+  setDiagnostic("wasmRoot", WASM_ROOT);
+
+  if (
+    typeof navigator === "undefined" ||
+    !("gpu" in navigator) ||
+    !navigator.gpu
+  ) {
+    setDiagnostic("webgpu", "unavailable");
+    setDiagnostic("adapter", "not requested");
+    throw new Error(
+      "WebGPU is not available in this browser. Use a recent Chromium-based browser with WebGPU enabled."
+    );
+  }
+
+  setDiagnostic("webgpu", "available");
+  setDiagnostic("adapter", "requesting");
+
+  let adapter;
+  try {
+    adapter = await navigator.gpu.requestAdapter();
+  } catch (error) {
+    setDiagnostic("adapter", "request failed");
+    const message =
+      error instanceof Error ? error.message : "Unknown adapter request failure.";
+    throw new Error(`WebGPU adapter request failed: ${message}`);
+  }
+
+  if (!adapter) {
+    setDiagnostic("adapter", "unavailable");
+    throw new Error(
+      "WebGPU is exposed by the browser, but no GPU adapter could be acquired. This usually means GPU access is blocked, unsupported, or the device lacks enough resources."
+    );
+  }
+
+  setDiagnostic("adapter", "acquired");
+  return adapter;
+}
+
+function buildInitializationTimeoutMessage() {
+  return [
+    `Model initialization timed out after ${Math.round(INIT_TIMEOUT_MS / 1000)} seconds.`,
+    "Large local Gemma model creation can take significant time and may fail on unsupported GPUs or memory-constrained devices.",
+    "Use Reset State to clear the session, then try again or test on a newer Chromium browser with working WebGPU.",
+  ].join("\n");
+}
+
+function updateInitializationStage(attemptId, stage) {
+  if (attemptId !== initAttemptId) {
+    return;
+  }
+
+  if (stage === "resolving-fileset") {
+    setDiagnostic("stage", "resolving-fileset");
+    setStatus("Resolving MediaPipe fileset...", "working");
+    return;
+  }
+
+  if (stage === "creating-inference") {
+    setDiagnostic("stage", "creating-inference");
+    setStatus("Creating Gemma inference instance...", "working");
+    if (initLongLoadTimer === null) {
+      initLongLoadTimer = window.setTimeout(() => {
+        if (attemptId !== initAttemptId) {
+          return;
+        }
+        setDiagnostic("stage", "creating-inference (long-running)");
+        setStatus(
+          "Still creating Gemma inference instance. Large local models can take significant time and may fail on unsupported GPUs or memory-constrained devices.",
+          "working"
+        );
+      }, INIT_LONG_LOAD_MS);
+    }
+    return;
+  }
+
+  clearLongLoadTimer();
+  setDiagnostic("stage", "ready");
+  setStatus("Model ready.", "ready");
+}
+
+async function initializeModelWithGuards(attemptId) {
+  const initPromise = model.initialize((progress) => {
+    updateInitializationStage(attemptId, progress.stage);
+  });
+
+  const timeoutPromise = new Promise((_, reject) => {
+    initTimeoutTimer = window.setTimeout(() => {
+      reject(new Error(buildInitializationTimeoutMessage()));
+    }, INIT_TIMEOUT_MS);
+  });
+
+  try {
+    await Promise.race([initPromise, timeoutPromise]);
+  } finally {
+    clearInitTimers();
+  }
+}
+
+async function buildAgent(attemptId) {
   const modelAsset = await resolveModelAssetPath();
+  const wasmAsset = await resolveWasmAsset();
   validateModelAsset(modelAsset);
+  await runRuntimeCompatibilityPreflight();
+  setDiagnostic("modelUrl", modelAsset.path);
   appendMessage(
     "system",
     "Model Preflight",
@@ -299,12 +502,16 @@ async function buildAgent() {
       `Resolved model URL: ${modelAsset.path}`,
       `Content-Type: ${modelAsset.contentType}`,
       `Content-Length: ${formatBytes(modelAsset.contentLength)}`,
+      `Resolved WASM runtime: ${wasmAsset.path}`,
+      `WASM Content-Type: ${wasmAsset.contentType}`,
+      `WebGPU: ${diagnostics.webgpu}`,
+      `Adapter: ${diagnostics.adapter}`,
       "Expected size is roughly 2.0 GB for the real Gemma 4 E2B web model.",
     ].join("\n")
   );
 
   model = new ChatMediaPipeGenAI({
-    wasmRoot: "/vendor/mediapipe/tasks-genai/wasm",
+    wasmRoot: WASM_ROOT,
     modelAssetPath: modelAsset.path,
     maxTokens: 2048,
     temperature: 0.2,
@@ -312,20 +519,9 @@ async function buildAgent() {
     randomSeed: 101,
   });
 
+  setDiagnostic("stage", "initializing");
   setStatus("Initializing MediaPipe fileset...", "working");
-  await model.initialize((progress) => {
-    if (progress.stage === "resolving-fileset") {
-      setStatus("Resolving MediaPipe fileset...", "working");
-      return;
-    }
-
-    if (progress.stage === "creating-inference") {
-      setStatus("Creating Gemma inference instance...", "working");
-      return;
-    }
-
-    setStatus("Model ready.", "ready");
-  });
+  await initializeModelWithGuards(attemptId);
 
   const tools = [weatherTool, localTimeTool, calculatorTool];
   const prompt = ChatPromptTemplate.fromMessages([
@@ -359,11 +555,13 @@ initButton.addEventListener("click", async () => {
     return;
   }
 
+  const attemptId = initAttemptId + 1;
+  initAttemptId = attemptId;
   isInitializing = true;
   syncUi();
 
   try {
-    await buildAgent();
+    await buildAgent(attemptId);
     appendMessage(
       "system",
       "Init",
@@ -372,7 +570,10 @@ initButton.addEventListener("click", async () => {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown initialization error.";
+    initAttemptId += 1;
+    clearInitTimers();
     setStatus(message, "error");
+    setDiagnostic("stage", "failed");
     appendMessage("error", "Initialization Error", message);
     model = null;
     agentExecutor = null;
@@ -380,6 +581,16 @@ initButton.addEventListener("click", async () => {
     isInitializing = false;
     syncUi();
   }
+});
+
+resetButton.addEventListener("click", () => {
+  if (isRunning) {
+    return;
+  }
+
+  resetDemoState({
+    announce: model !== null || agentExecutor !== null || statusNode.dataset.mode === "error",
+  });
 });
 
 sendButton.addEventListener("click", async () => {
@@ -435,3 +646,5 @@ promptInput.addEventListener("keydown", async (event) => {
 });
 
 syncUi();
+setStatus("Idle.", "idle");
+setDiagnostic("wasmRoot", WASM_ROOT);
