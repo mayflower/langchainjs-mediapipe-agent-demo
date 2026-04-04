@@ -2,3 +2,4 @@ node_modules
 dist
 public/vendor
 public/models/**/*.task
+!public/models/gemma/gemma-4-E2B-it-web.task
