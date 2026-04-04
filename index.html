@@ -73,6 +73,24 @@
         </details>
 
         <details class="info-panel" open>
+          <summary>Run Metrics</summary>
+          <dl class="diagnostics-grid">
+            <div>
+              <dt>Output Tokens</dt>
+              <dd id="metric-output-tokens"><code>0</code></dd>
+            </div>
+            <div>
+              <dt>Token/s</dt>
+              <dd id="metric-token-rate"><code>0.0</code></dd>
+            </div>
+            <div class="wide">
+              <dt>LLM Calls</dt>
+              <dd id="metric-llm-calls"><code>0</code></dd>
+            </div>
+          </dl>
+        </details>
+
+        <details class="info-panel" open>
           <summary>Model Download</summary>
           <progress id="download-progress" max="1" value="0"></progress>
           <p id="download-status" class="download-status">Not started.</p>

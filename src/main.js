@@ -1,4 +1,5 @@
 import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { tool } from "@langchain/core/tools";
 import {
   AgentExecutor,
@@ -20,6 +21,12 @@ const diagnosticsNodes = {
   webgpu: document.getElementById("diag-webgpu"),
   adapter: document.getElementById("diag-adapter"),
   stage: document.getElementById("diag-stage"),
+};
+
+const metricNodes = {
+  outputTokens: document.getElementById("metric-output-tokens"),
+  tokenRate: document.getElementById("metric-token-rate"),
+  llmCalls: document.getElementById("metric-llm-calls"),
 };
 
 const downloadProgressNode = document.getElementById("download-progress");
@@ -50,6 +57,16 @@ const diagnostics = {
   stage: "idle",
 };
 
+const runMetrics = {
+  outputText: "",
+  outputTokens: 0,
+  tokenRate: 0,
+  llmCalls: 0,
+  startedAt: 0,
+  firstTokenAt: 0,
+  lastTokenAt: 0,
+};
+
 function formatBytes(value) {
   if (!Number.isFinite(value) || value <= 0) {
     return "unknown size";
@@ -76,6 +93,14 @@ function formatPercent(received, total) {
 
 function extractErrorMessage(error, fallback) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function formatTokenRate(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0.0";
+  }
+
+  return value.toFixed(value >= 100 ? 0 : 1);
 }
 
 async function fetchJson(url) {
@@ -296,6 +321,24 @@ function setDiagnostic(key, value) {
   diagnosticsNodes[key].textContent = value;
 }
 
+function setRunMetric(key, value) {
+  metricNodes[key].textContent = value;
+}
+
+function resetRunMetrics() {
+  runMetrics.outputText = "";
+  runMetrics.outputTokens = 0;
+  runMetrics.tokenRate = 0;
+  runMetrics.llmCalls = 0;
+  runMetrics.startedAt = 0;
+  runMetrics.firstTokenAt = 0;
+  runMetrics.lastTokenAt = 0;
+
+  setRunMetric("outputTokens", "0");
+  setRunMetric("tokenRate", "0.0");
+  setRunMetric("llmCalls", "0");
+}
+
 function setDownloadProgress(received, total, statusText) {
   if (Number.isFinite(total) && total > 0) {
     downloadProgressNode.removeAttribute("indeterminate");
@@ -366,6 +409,7 @@ function resetDemoState(options = {}) {
   setDiagnostic("adapter", "unchecked");
   setDiagnostic("stage", "idle");
   resetDownloadProgress();
+  resetRunMetrics();
 
   if (announce) {
     appendMessage(
@@ -376,6 +420,51 @@ function resetDemoState(options = {}) {
   }
 
   syncUi();
+}
+
+function createRunMetricsHandler() {
+  const handler = BaseCallbackHandler.fromMethods({
+    handleChatModelStart() {
+      runMetrics.llmCalls += 1;
+      setRunMetric("llmCalls", String(runMetrics.llmCalls));
+    },
+    handleLLMNewToken(token) {
+      const now = performance.now();
+      if (!runMetrics.firstTokenAt) {
+        runMetrics.firstTokenAt = now;
+      }
+      runMetrics.lastTokenAt = now;
+      runMetrics.outputText += token;
+    },
+  });
+
+  handler.lc_prefer_streaming = true;
+  return handler;
+}
+
+async function finalizeRunMetrics() {
+  if (!model) {
+    resetRunMetrics();
+    return;
+  }
+
+  if (runMetrics.outputText) {
+    runMetrics.outputTokens = await model.getNumTokens(runMetrics.outputText);
+  } else {
+    runMetrics.outputTokens = 0;
+  }
+
+  const startedAt = runMetrics.firstTokenAt || runMetrics.startedAt;
+  const endedAt = runMetrics.lastTokenAt || performance.now();
+  const elapsedSeconds =
+    startedAt && endedAt > startedAt ? (endedAt - startedAt) / 1000 : 0;
+
+  runMetrics.tokenRate =
+    elapsedSeconds > 0 ? runMetrics.outputTokens / elapsedSeconds : 0;
+
+  setRunMetric("outputTokens", String(runMetrics.outputTokens));
+  setRunMetric("tokenRate", formatTokenRate(runMetrics.tokenRate));
+  setRunMetric("llmCalls", String(runMetrics.llmCalls));
 }
 
 function syncUi() {
@@ -758,13 +847,20 @@ sendButton.addEventListener("click", async () => {
   }
 
   isRunning = true;
+  resetRunMetrics();
+  runMetrics.startedAt = performance.now();
   syncUi();
   appendMessage("user", "User", input);
   promptInput.value = "";
   setStatus("Running agent...", "working");
 
   try {
-    const result = await agentExecutor.invoke({ input });
+    const result = await agentExecutor.invoke(
+      { input },
+      { callbacks: [createRunMetricsHandler()] }
+    );
+
+    await finalizeRunMetrics();
 
     for (const step of result.intermediateSteps ?? []) {
       appendMessage(
@@ -782,7 +878,10 @@ sendButton.addEventListener("click", async () => {
     }
 
     appendMessage("assistant", "Assistant", result.output ?? "(empty output)");
-    setStatus("Model ready.", "ready");
+    setStatus(
+      `Model ready. Last run: ${formatTokenRate(runMetrics.tokenRate)} tok/s.`,
+      "ready"
+    );
   } catch (error) {
     const message = extractErrorMessage(error, "Unknown agent error.");
     appendMessage("error", "Agent Error", message);
@@ -794,7 +893,7 @@ sendButton.addEventListener("click", async () => {
 });
 
 promptInput.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+  if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     sendButton.click();
   }
@@ -804,3 +903,4 @@ syncUi();
 setStatus("Idle.", "idle");
 setDiagnostic("wasmRoot", WASM_ROOT);
 resetDownloadProgress();
+resetRunMetrics();
