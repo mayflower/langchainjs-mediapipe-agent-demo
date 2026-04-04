@@ -40,6 +40,7 @@ let initAttemptId = 0;
 let initLongLoadTimer = null;
 let initTimeoutTimer = null;
 let initDownloadController = null;
+let isModelDownloadComplete = false;
 
 const WASM_ROOT = "/vendor/mediapipe/tasks-genai/wasm";
 const INIT_LONG_LOAD_MS = 20_000;
@@ -318,7 +319,9 @@ function setStatus(text, mode = "idle") {
 
 function setDiagnostic(key, value) {
   diagnostics[key] = value;
-  diagnosticsNodes[key].textContent = value;
+  if (diagnosticsNodes[key]) {
+    diagnosticsNodes[key].textContent = value;
+  }
 }
 
 function setRunMetric(key, value) {
@@ -354,6 +357,7 @@ function setDownloadProgress(received, total, statusText) {
 }
 
 function resetDownloadProgress() {
+  isModelDownloadComplete = false;
   setDownloadProgress(0, 1, "Not started.");
 }
 
@@ -528,7 +532,44 @@ async function resolveModelAssetPath() {
   );
 }
 
-async function warmModelAssetDownload(modelAsset, attemptId) {
+async function consumeModelDownloadProgress(stream, total, attemptId) {
+  const reader = stream.getReader();
+  let received = 0;
+
+  try {
+    while (true) {
+      throwIfAttemptStale(attemptId);
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (value) {
+        received += value.byteLength;
+      }
+
+      setDownloadProgress(
+        received,
+        total,
+        `Downloaded ${formatBytes(received)} of ${formatBytes(
+          total
+        )} (${formatPercent(received, total)}).`
+      );
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  }
+
+  setDownloadProgress(
+    total || received || 1,
+    total || received || 1,
+    `Model download completed (${formatBytes(total || received)}).`
+  );
+  isModelDownloadComplete = true;
+}
+
+async function prepareModelAssetBuffer(modelAsset, attemptId) {
   throwIfAttemptStale(attemptId);
   setDiagnostic("stage", "downloading-model");
   setStatus("Downloading model asset...", "working");
@@ -567,49 +608,33 @@ async function warmModelAssetDownload(modelAsset, attemptId) {
   const total =
     Number(response.headers.get("content-length")) || modelAsset.contentLength;
   if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
     setDownloadProgress(
-      total || 1,
-      total || 1,
-      `Model download completed (${formatBytes(total)}).`
+      bytes.byteLength,
+      total || bytes.byteLength,
+      `Model download completed (${formatBytes(total || bytes.byteLength)}).`
     );
     initDownloadController = null;
-    return;
+    isModelDownloadComplete = true;
+    return {
+      modelAssetBuffer: bytes,
+      progressPromise: Promise.resolve(),
+    };
   }
 
-  const reader = response.body.getReader();
-  let received = 0;
-  try {
-    while (true) {
-      throwIfAttemptStale(attemptId);
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      if (value) {
-        received += value.byteLength;
-      }
-
-      setDownloadProgress(
-        received,
-        total,
-        `Downloaded ${formatBytes(received)} of ${formatBytes(
-          total
-        )} (${formatPercent(received, total)}).`
-      );
-    }
-  } catch (error) {
-    await reader.cancel().catch(() => {});
-    throw error;
-  } finally {
+  const [progressStream, modelStream] = response.body.tee();
+  const progressPromise = consumeModelDownloadProgress(
+    progressStream,
+    total,
+    attemptId
+  ).finally(() => {
     initDownloadController = null;
-  }
+  });
 
-  setDownloadProgress(
-    total || received || 1,
-    total || received || 1,
-    `Model download completed (${formatBytes(total || received)}).`
-  );
+  return {
+    modelAssetBuffer: modelStream.getReader(),
+    progressPromise,
+  };
 }
 
 async function runRuntimeCompatibilityPreflight() {
@@ -675,6 +700,11 @@ function updateInitializationStage(attemptId, stage) {
 
   if (stage === "creating-inference") {
     setDiagnostic("stage", "creating-inference");
+    if (!isModelDownloadComplete) {
+      setStatus("Streaming model into MediaPipe...", "working");
+      return;
+    }
+
     setStatus("Creating Gemma inference instance...", "working");
     if (initLongLoadTimer === null) {
       initLongLoadTimer = window.setTimeout(() => {
@@ -696,20 +726,30 @@ function updateInitializationStage(attemptId, stage) {
   setStatus("Model ready.", "ready");
 }
 
-async function initializeModelWithGuards(attemptId) {
+async function initializeModelWithGuards(attemptId, progressPromise) {
   const initPromise = model.initialize((progress) => {
     updateInitializationStage(attemptId, progress.stage);
   });
 
+  let settled = false;
   const timeoutPromise = new Promise((_, reject) => {
-    initTimeoutTimer = window.setTimeout(() => {
-      reject(new Error(buildInitializationTimeoutMessage()));
-    }, INIT_TIMEOUT_MS);
+    progressPromise.then(
+      () => {
+        if (settled) {
+          return;
+        }
+        initTimeoutTimer = window.setTimeout(() => {
+          reject(new Error(buildInitializationTimeoutMessage()));
+        }, INIT_TIMEOUT_MS);
+      },
+      reject
+    );
   });
 
   try {
     await Promise.race([initPromise, timeoutPromise]);
   } finally {
+    settled = true;
     clearInitTimers();
   }
 }
@@ -737,12 +777,16 @@ async function buildAgent(attemptId) {
     ].join("\n")
   );
 
-  await warmModelAssetDownload(modelAsset, attemptId);
+  const { modelAssetBuffer, progressPromise } = await prepareModelAssetBuffer(
+    modelAsset,
+    attemptId
+  );
   throwIfAttemptStale(attemptId);
 
   model = new ChatMediaPipeGenAI({
     wasmRoot: WASM_ROOT,
     modelAssetPath: modelAsset.path,
+    modelAssetBuffer,
     maxTokens: 2048,
     temperature: 0.2,
     topK: 40,
@@ -751,7 +795,10 @@ async function buildAgent(attemptId) {
 
   setDiagnostic("stage", "initializing");
   setStatus("Initializing MediaPipe fileset...", "working");
-  await initializeModelWithGuards(attemptId);
+  await Promise.all([
+    initializeModelWithGuards(attemptId, progressPromise),
+    progressPromise,
+  ]);
   throwIfAttemptStale(attemptId);
 
   const tools = [weatherTool, localTimeTool, calculatorTool];

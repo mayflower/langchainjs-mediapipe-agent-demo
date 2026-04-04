@@ -49,7 +49,8 @@ interface MediaPipeLlmInferenceStaticLike {
     fileset: unknown,
     options: {
       baseOptions: {
-        modelAssetPath: string;
+        modelAssetPath?: string;
+        modelAssetBuffer?: Uint8Array | ReadableStreamDefaultReader<Uint8Array>;
       };
       maxTokens?: number;
       temperature?: number;
@@ -69,6 +70,7 @@ interface MediaPipeTasksGenAIModuleLike {
 export interface ChatMediaPipeGenAIInput extends BaseChatModelParams {
   wasmRoot: string;
   modelAssetPath: string;
+  modelAssetBuffer?: Uint8Array | ReadableStreamDefaultReader<Uint8Array>;
   maxTokens?: number;
   temperature?: number;
   topK?: number;
@@ -328,6 +330,8 @@ export class ChatMediaPipeGenAI extends BaseChatModel<ChatMediaPipeGenAICallOpti
 
   modelAssetPath: string;
 
+  modelAssetBuffer?: Uint8Array | ReadableStreamDefaultReader<Uint8Array>;
+
   maxTokens?: number;
 
   temperature?: number;
@@ -351,6 +355,7 @@ export class ChatMediaPipeGenAI extends BaseChatModel<ChatMediaPipeGenAICallOpti
 
     this.wasmRoot = fields.wasmRoot;
     this.modelAssetPath = fields.modelAssetPath;
+    this.modelAssetBuffer = fields.modelAssetBuffer;
     this.maxTokens = fields.maxTokens;
     this.temperature = fields.temperature;
     this.topK = fields.topK;
@@ -415,9 +420,13 @@ export class ChatMediaPipeGenAI extends BaseChatModel<ChatMediaPipeGenAICallOpti
     this.llmInference = await tasksModule.LlmInference.createFromOptions(
       fileset,
       {
-        baseOptions: {
-          modelAssetPath: this.modelAssetPath,
-        },
+        baseOptions: this.modelAssetBuffer
+          ? {
+              modelAssetBuffer: this.modelAssetBuffer,
+            }
+          : {
+              modelAssetPath: this.modelAssetPath,
+            },
         maxTokens: this.maxTokens,
         temperature: this.temperature,
         topK: this.topK,
@@ -426,6 +435,7 @@ export class ChatMediaPipeGenAI extends BaseChatModel<ChatMediaPipeGenAICallOpti
         supportAudio: this.supportAudio,
       }
     );
+    this.modelAssetBuffer = undefined;
 
     progressCallback?.({ stage: "ready" });
   }

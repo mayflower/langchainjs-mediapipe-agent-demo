@@ -32,48 +32,22 @@
             <dt>Agent</dt>
             <dd><code>@langchain/classic</code></dd>
           </div>
-          <div>
-            <dt>Modes</dt>
-            <dd><code>Text + Tools</code></dd>
-          </div>
         </dl>
 
-        <div class="controls">
-          <button id="init-button" class="primary">Initialize Model</button>
-          <button id="reset-button" class="secondary" disabled>
-            Reset State
-          </button>
-        </div>
-        <p id="status" class="status">Idle.</p>
+        <section class="init-card">
+          <div class="controls">
+            <button id="init-button" class="primary">Initialize Model</button>
+            <button id="reset-button" class="secondary" disabled>
+              Reset State
+            </button>
+          </div>
+          <p id="status" class="status">Idle.</p>
+          <progress id="download-progress" max="1" value="0"></progress>
+          <p id="download-status" class="download-status">Not started.</p>
+        </section>
 
-        <details class="info-panel" open>
-          <summary>Runtime Diagnostics</summary>
-          <dl class="diagnostics-grid">
-            <div>
-              <dt>Model URL</dt>
-              <dd id="diag-model-url"><code>unresolved</code></dd>
-            </div>
-            <div>
-              <dt>WASM Root</dt>
-              <dd id="diag-wasm-root"><code>/vendor/mediapipe/tasks-genai/wasm</code></dd>
-            </div>
-            <div>
-              <dt>WebGPU</dt>
-              <dd id="diag-webgpu"><code>unchecked</code></dd>
-            </div>
-            <div>
-              <dt>Adapter</dt>
-              <dd id="diag-adapter"><code>unchecked</code></dd>
-            </div>
-            <div class="wide">
-              <dt>Stage</dt>
-              <dd id="diag-stage"><code>idle</code></dd>
-            </div>
-          </dl>
-        </details>
-
-        <details class="info-panel" open>
-          <summary>Run Metrics</summary>
+        <section class="info-panel metrics-panel">
+          <h2>Run Metrics</h2>
           <dl class="diagnostics-grid">
             <div>
               <dt>Output Tokens</dt>
@@ -88,13 +62,7 @@
               <dd id="metric-llm-calls"><code>0</code></dd>
             </div>
           </dl>
-        </details>
-
-        <details class="info-panel" open>
-          <summary>Model Download</summary>
-          <progress id="download-progress" max="1" value="0"></progress>
-          <p id="download-status" class="download-status">Not started.</p>
-        </details>
+        </section>
       </aside>
 
       <main class="panel workspace">
@@ -102,7 +70,6 @@
           <section class="transcript-wrap">
             <div class="section-head">
               <div>
-                <p class="section-kicker">Agent Loop</p>
                 <h2>Transcript</h2>
               </div>
               <p class="section-copy">
