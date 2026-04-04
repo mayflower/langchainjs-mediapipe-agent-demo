@@ -62,7 +62,11 @@ export type RenderedPrompt = string | RenderedPromptPart[];
 
 export interface MessageContentParts {
   text: string;
+  hasMedia: boolean;
   mediaParts: Array<{ imageSource: string } | { audioSource: string }>;
+  orderedParts: Array<
+    string | { imageSource: string } | { audioSource: string }
+  >;
 }
 
 export function extractVisibleText(rawText: string): string {
@@ -110,15 +114,22 @@ export function getMessageContentParts(
   message: BaseMessage
 ): MessageContentParts {
   if (typeof message.content === "string") {
-    return { text: message.content, mediaParts: [] };
+    return {
+      text: message.content,
+      hasMedia: false,
+      mediaParts: [],
+      orderedParts: [message.content],
+    };
   }
 
   const textParts: string[] = [];
   const mediaParts: MessageContentParts["mediaParts"] = [];
+  const orderedParts: MessageContentParts["orderedParts"] = [];
 
   for (const part of message.content) {
     if (typeof part === "string") {
       textParts.push(part);
+      orderedParts.push(part);
       continue;
     }
     if (typeof part !== "object" || part === null || !("type" in part)) {
@@ -126,7 +137,9 @@ export function getMessageContentParts(
     }
 
     if (part.type === "text" && "text" in part) {
-      textParts.push(part.text as string);
+      const text = part.text as string;
+      textParts.push(text);
+      orderedParts.push(text);
     } else if (part.type === "image_url" && "image_url" in part) {
       const imageUrl = part.image_url;
       const url =
@@ -138,11 +151,26 @@ export function getMessageContentParts(
             ? (imageUrl.url as string)
             : undefined;
       if (url) {
-        mediaParts.push({ imageSource: url });
+        const mediaPart = { imageSource: url };
+        mediaParts.push(mediaPart);
+        orderedParts.push(mediaPart);
       }
     } else if (part.type === "input_audio" && "input_audio" in part) {
       const audio = part.input_audio;
-      if (
+      if (typeof audio === "string") {
+        const mediaPart = { audioSource: audio };
+        mediaParts.push(mediaPart);
+        orderedParts.push(mediaPart);
+      } else if (
+        typeof audio === "object" &&
+        audio !== null &&
+        "url" in audio &&
+        typeof audio.url === "string"
+      ) {
+        const mediaPart = { audioSource: audio.url };
+        mediaParts.push(mediaPart);
+        orderedParts.push(mediaPart);
+      } else if (
         typeof audio === "object" &&
         audio !== null &&
         "data" in audio &&
@@ -152,14 +180,21 @@ export function getMessageContentParts(
           "format" in audio && typeof audio.format === "string"
             ? audio.format
             : "wav";
-        mediaParts.push({
+        const mediaPart = {
           audioSource: `data:audio/${format};base64,${audio.data}`,
-        });
+        };
+        mediaParts.push(mediaPart);
+        orderedParts.push(mediaPart);
       }
     }
   }
 
-  return { text: textParts.join(""), mediaParts };
+  return {
+    text: textParts.join(""),
+    hasMedia: mediaParts.length > 0,
+    mediaParts,
+    orderedParts,
+  };
 }
 
 export function stripHistoricalThoughts(

@@ -12,33 +12,29 @@
   <body>
     <div class="shell">
       <aside class="panel intro">
-        <p class="eyebrow">Local Demo</p>
-        <h1>Gemma 4 Agent</h1>
+        <p class="eyebrow">Standalone Demo</p>
+        <h1>Gemma 4 Browser Lab</h1>
         <p class="lede">
-          Browser-only LangChain agent running on top of
+          Local LangChain agent running fully in the browser on top of
           <code>@langchain/community/chat_models/mediapipe_genai</code>.
         </p>
 
-        <dl class="facts">
+        <dl class="facts compact-facts">
           <div>
             <dt>Model</dt>
             <dd><code>gemma-4-E2B-it-web.task</code></dd>
           </div>
           <div>
-            <dt>WASM Root</dt>
-            <dd><code>/vendor/mediapipe/tasks-genai/wasm</code></dd>
+            <dt>Runtime</dt>
+            <dd><code>WebGPU + MediaPipe</code></dd>
           </div>
           <div>
-            <dt>Model Path</dt>
-            <dd><code>/models/gemma/gemma-4-E2B-it-web.task</code></dd>
+            <dt>Agent</dt>
+            <dd><code>@langchain/classic</code></dd>
           </div>
           <div>
-            <dt>Sampling</dt>
-            <dd><code>2048 / topK 40 / temp 0.2 / seed 101</code></dd>
-          </div>
-          <div>
-            <dt>Agent Stack</dt>
-            <dd><code>@langchain/classic/agents</code></dd>
+            <dt>Modes</dt>
+            <dd><code>Text + Tools</code></dd>
           </div>
         </dl>
 
@@ -50,12 +46,8 @@
         </div>
         <p id="status" class="status">Idle.</p>
 
-        <section class="diagnostics" aria-labelledby="diagnostics-heading">
-          <div class="diagnostics-header">
-            <h2 id="diagnostics-heading">Runtime Diagnostics</h2>
-            <p>Initialization state is updated live while the browser loads the model.</p>
-          </div>
-
+        <details class="info-panel" open>
+          <summary>Runtime Diagnostics</summary>
           <dl class="diagnostics-grid">
             <div>
               <dt>Model URL</dt>
@@ -73,141 +65,54 @@
               <dt>Adapter</dt>
               <dd id="diag-adapter"><code>unchecked</code></dd>
             </div>
-            <div>
+            <div class="wide">
               <dt>Stage</dt>
               <dd id="diag-stage"><code>idle</code></dd>
             </div>
           </dl>
-        </section>
+        </details>
 
-        <section class="download-panel" aria-labelledby="download-heading">
-          <div class="diagnostics-header">
-            <h2 id="download-heading">Model Download</h2>
-            <p>
-              Byte progress is shown while the browser reads the Gemma model
-              asset before inference creation.
-            </p>
-          </div>
+        <details class="info-panel" open>
+          <summary>Model Download</summary>
           <progress id="download-progress" max="1" value="0"></progress>
           <p id="download-status" class="download-status">Not started.</p>
-        </section>
+        </details>
       </aside>
 
       <main class="panel workspace">
-        <section id="transcript" class="transcript" aria-live="polite">
-          <article class="message system">
-            <h2>System</h2>
-            <p>
-              Initialize the model, then ask for weather, time, or math. The
-              agent runs locally in the browser and decides when to call tools.
-            </p>
-          </article>
-        </section>
-
-        <section class="multimodal">
-          <article class="media-panel">
-            <div class="media-header">
-              <h2>Image Analysis</h2>
-              <p>Upload an image or capture one camera snapshot, then ask the model about it directly.</p>
+        <div class="workspace-grid">
+          <section class="transcript-wrap">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Agent Loop</p>
+                <h2>Transcript</h2>
+              </div>
+              <p class="section-copy">
+                Use the tool-calling agent for weather, time, and math with the
+                current text-only Gemma 4 web model.
+              </p>
             </div>
 
-            <label class="file-picker">
-              <span>Upload image</span>
-              <input id="image-upload" type="file" accept="image/*" />
-            </label>
+            <section id="transcript" class="transcript" aria-live="polite">
+              <article class="message system">
+                <h2>System</h2>
+                <p>Initialize the model, then run the local tool-calling agent.</p>
+              </article>
+            </section>
 
-            <div class="media-preview-stack">
-              <img
-                id="image-preview"
-                class="image-preview"
-                alt="Selected image preview"
-                hidden
-              />
-              <video
-                id="camera-preview"
-                class="camera-preview"
-                autoplay
-                playsinline
-                muted
-                hidden
-              ></video>
-            </div>
-
-            <p id="image-status" class="media-status">No image selected.</p>
-
-            <div class="media-actions">
-              <button id="start-camera-button" class="secondary">Start Camera</button>
-              <button id="capture-image-button" class="secondary" disabled>
-                Take Snapshot
-              </button>
-              <button id="stop-camera-button" class="secondary" disabled>
-                Stop Camera
-              </button>
-            </div>
-
-            <label class="composer-label" for="image-prompt">Image Prompt</label>
-            <textarea
-              id="image-prompt"
-              rows="3"
-              placeholder="Describe the important details in this image."
-            >Describe the important details in this image.</textarea>
-
-            <div class="actions">
-              <button id="analyze-image-button" class="primary" disabled>
-                Analyze Image
-              </button>
-            </div>
-          </article>
-
-          <article class="media-panel">
-            <div class="media-header">
-              <h2>Audio Analysis</h2>
-              <p>Upload audio or record a short clip with your microphone for transcription or summarization.</p>
-            </div>
-
-            <label class="file-picker">
-              <span>Upload audio</span>
-              <input id="audio-upload" type="file" accept="audio/*" />
-            </label>
-
-            <audio id="audio-preview" class="audio-preview" controls hidden></audio>
-            <p id="audio-status" class="media-status">No audio selected.</p>
-
-            <div class="media-actions">
-              <button id="start-recording-button" class="secondary">
-                Start Recording
-              </button>
-              <button id="stop-recording-button" class="secondary" disabled>
-                Stop Recording
-              </button>
-            </div>
-
-            <label class="composer-label" for="audio-prompt">Audio Prompt</label>
-            <textarea
-              id="audio-prompt"
-              rows="3"
-              placeholder="Transcribe this audio and summarize it briefly."
-            >Transcribe this audio and summarize it briefly.</textarea>
-
-            <div class="actions">
-              <button id="analyze-audio-button" class="primary" disabled>
-                Analyze Audio
-              </button>
-            </div>
-          </article>
-        </section>
-
-        <section class="composer">
-          <label class="composer-label" for="prompt-input">Message</label>
-          <textarea
-            id="prompt-input"
-            rows="4"
-            placeholder="Example: What's the weather and local time in Berlin, and what is 17 * 6?"
-          ></textarea>
-          <div class="actions">
-            <button id="send-button" class="primary" disabled>Run Agent</button>
-          </div>
-        </section>
+            <section class="composer compact-card">
+              <label class="composer-label" for="prompt-input">Agent Prompt</label>
+              <textarea
+                id="prompt-input"
+                rows="3"
+                placeholder="Example: What's the weather and local time in Berlin, and what is 17 * 6?"
+              ></textarea>
+              <div class="actions">
+                <button id="send-button" class="primary" disabled>Run Agent</button>
+              </div>
+            </section>
+          </section>
+        </div>
       </main>
     </div>
 

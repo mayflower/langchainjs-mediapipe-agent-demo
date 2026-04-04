@@ -1,4 +1,3 @@
-import { HumanMessage } from "@langchain/core/messages";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { tool } from "@langchain/core/tools";
 import {
@@ -26,40 +25,14 @@ const diagnosticsNodes = {
 const downloadProgressNode = document.getElementById("download-progress");
 const downloadStatusNode = document.getElementById("download-status");
 
-const imageUploadInput = document.getElementById("image-upload");
-const imagePromptInput = document.getElementById("image-prompt");
-const imagePreviewNode = document.getElementById("image-preview");
-const imageStatusNode = document.getElementById("image-status");
-const cameraPreviewNode = document.getElementById("camera-preview");
-const startCameraButton = document.getElementById("start-camera-button");
-const captureImageButton = document.getElementById("capture-image-button");
-const stopCameraButton = document.getElementById("stop-camera-button");
-const analyzeImageButton = document.getElementById("analyze-image-button");
-
-const audioUploadInput = document.getElementById("audio-upload");
-const audioPromptInput = document.getElementById("audio-prompt");
-const audioPreviewNode = document.getElementById("audio-preview");
-const audioStatusNode = document.getElementById("audio-status");
-const startRecordingButton = document.getElementById("start-recording-button");
-const stopRecordingButton = document.getElementById("stop-recording-button");
-const analyzeAudioButton = document.getElementById("analyze-audio-button");
-
 let agentExecutor = null;
 let model = null;
 let isInitializing = false;
 let isRunning = false;
-let isRecording = false;
 let initAttemptId = 0;
 let initLongLoadTimer = null;
 let initTimeoutTimer = null;
 let initDownloadController = null;
-let cameraStream = null;
-let microphoneStream = null;
-let mediaRecorder = null;
-let discardNextRecording = false;
-let recordedChunks = [];
-let selectedImage = null;
-let selectedAudio = null;
 
 const WASM_ROOT = "/vendor/mediapipe/tasks-genai/wasm";
 const INIT_LONG_LOAD_MS = 20_000;
@@ -375,132 +348,16 @@ function throwIfAttemptStale(attemptId) {
   }
 }
 
-function revokeSelectionUrl(selection) {
-  if (selection?.revoke && selection.url) {
-    URL.revokeObjectURL(selection.url);
-  }
-}
-
-function stopCameraStream() {
-  if (!cameraStream) {
-    cameraPreviewNode.hidden = true;
-    cameraPreviewNode.srcObject = null;
-    return;
-  }
-
-  for (const track of cameraStream.getTracks()) {
-    track.stop();
-  }
-  cameraStream = null;
-  cameraPreviewNode.srcObject = null;
-  cameraPreviewNode.hidden = true;
-}
-
-function stopMicrophoneStream() {
-  if (!microphoneStream) {
-    return;
-  }
-
-  for (const track of microphoneStream.getTracks()) {
-    track.stop();
-  }
-  microphoneStream = null;
-}
-
-function setImageSelection(selection) {
-  revokeSelectionUrl(selectedImage);
-  selectedImage = selection;
-
-  if (!selection) {
-    imagePreviewNode.hidden = true;
-    imagePreviewNode.removeAttribute("src");
-    imageStatusNode.textContent = "No image selected.";
-    syncUi();
-    return;
-  }
-
-  imagePreviewNode.src = selection.url;
-  imagePreviewNode.hidden = false;
-  imageStatusNode.textContent = `Ready: ${selection.label}`;
-  syncUi();
-}
-
-function setAudioSelection(selection) {
-  revokeSelectionUrl(selectedAudio);
-  selectedAudio = selection;
-
-  if (!selection) {
-    audioPreviewNode.hidden = true;
-    audioPreviewNode.pause();
-    audioPreviewNode.removeAttribute("src");
-    audioPreviewNode.load();
-    audioStatusNode.textContent = "No audio selected.";
-    syncUi();
-    return;
-  }
-
-  audioPreviewNode.src = selection.url;
-  audioPreviewNode.hidden = false;
-  audioPreviewNode.load();
-  audioStatusNode.textContent = `Ready: ${selection.label}`;
-  syncUi();
-}
-
-function setImageStatus(text) {
-  imageStatusNode.textContent = text;
-}
-
-function setAudioStatus(text) {
-  audioStatusNode.textContent = text;
-}
-
-function extractResponseText(message) {
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-
-  return message.content
-    .map((part) => {
-      if (typeof part === "string") {
-        return part;
-      }
-
-      if (
-        typeof part === "object" &&
-        part !== null &&
-        "type" in part &&
-        part.type === "text" &&
-        "text" in part
-      ) {
-        return part.text;
-      }
-
-      return "";
-    })
-    .filter(Boolean)
-    .join("");
-}
-
 function resetDemoState(options = {}) {
   const { announce = false } = options;
   initAttemptId += 1;
   clearInitTimers();
   abortModelDownload();
 
-  if (isRecording && mediaRecorder?.state === "recording") {
-    discardNextRecording = true;
-    mediaRecorder.stop();
-  }
-  stopMicrophoneStream();
-  stopCameraStream();
-
   model = null;
   agentExecutor = null;
   isInitializing = false;
   isRunning = false;
-  isRecording = false;
-  mediaRecorder = null;
-  recordedChunks = [];
 
   setStatus("Idle.", "idle");
   setDiagnostic("modelUrl", "unresolved");
@@ -522,46 +379,21 @@ function resetDemoState(options = {}) {
 }
 
 function syncUi() {
-  const hasRunnableModel = model !== null && agentExecutor !== null;
-  const canInteractWithMedia = !isInitializing && !isRunning;
-
   initButton.disabled = isInitializing || model !== null;
   resetButton.disabled =
     isRunning ||
     (!isInitializing &&
       model === null &&
       agentExecutor === null &&
-      !isRecording &&
       statusNode.dataset.mode !== "error" &&
       diagnostics.stage === "idle");
 
   sendButton.disabled = isInitializing || isRunning || agentExecutor === null;
   promptInput.disabled = isInitializing || isRunning || agentExecutor === null;
-
-  imageUploadInput.disabled = !canInteractWithMedia;
-  startCameraButton.disabled = !canInteractWithMedia || cameraStream !== null;
-  captureImageButton.disabled = !canInteractWithMedia || cameraStream === null;
-  stopCameraButton.disabled = !canInteractWithMedia || cameraStream === null;
-  imagePromptInput.disabled = !canInteractWithMedia;
-  analyzeImageButton.disabled =
-    !hasRunnableModel || !canInteractWithMedia || !selectedImage;
-
-  audioUploadInput.disabled = !canInteractWithMedia || isRecording;
-  startRecordingButton.disabled =
-    !canInteractWithMedia ||
-    isRecording ||
-    !navigator.mediaDevices?.getUserMedia ||
-    typeof MediaRecorder === "undefined";
-  stopRecordingButton.disabled = !isRecording;
-  audioPromptInput.disabled = !canInteractWithMedia;
-  analyzeAudioButton.disabled =
-    !hasRunnableModel || !canInteractWithMedia || !selectedAudio;
 }
 
 async function resolveWasmAsset() {
-  const response = await fetch(WASM_ENTRYPOINT, {
-    method: "HEAD",
-  });
+  const response = await fetch(WASM_ENTRYPOINT, { method: "HEAD" });
   if (!response.ok) {
     throw new Error(
       `MediaPipe runtime asset check failed for ${WASM_ENTRYPOINT} with ${response.status} ${response.statusText}.`
@@ -585,9 +417,7 @@ async function resolveWasmAsset() {
 async function resolveModelAssetPath() {
   for (const candidate of MODEL_ASSET_PATH_CANDIDATES) {
     try {
-      const response = await fetch(candidate, {
-        method: "HEAD",
-      });
+      const response = await fetch(candidate, { method: "HEAD" });
       if (response.ok) {
         const contentLength = Number(response.headers.get("content-length"));
         return {
@@ -733,7 +563,6 @@ async function runRuntimeCompatibilityPreflight() {
   }
 
   setDiagnostic("adapter", "acquired");
-  return adapter;
 }
 
 function buildInitializationTimeoutMessage() {
@@ -829,8 +658,6 @@ async function buildAgent(attemptId) {
     temperature: 0.2,
     topK: 40,
     randomSeed: 101,
-    maxNumImages: 1,
-    supportAudio: true,
   });
 
   setDiagnostic("stage", "initializing");
@@ -866,358 +693,6 @@ async function buildAgent(attemptId) {
   });
 }
 
-async function startCameraPreview() {
-  if (cameraStream) {
-    return;
-  }
-
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Camera access is unavailable in this browser.");
-  }
-
-  try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment",
-      },
-    });
-  } catch {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-    });
-  }
-
-  cameraPreviewNode.srcObject = cameraStream;
-  cameraPreviewNode.hidden = false;
-  await cameraPreviewNode.play().catch(() => {});
-  setImageStatus("Camera ready. Take a snapshot when the preview looks right.");
-  syncUi();
-}
-
-function captureCameraSnapshot() {
-  if (!cameraStream) {
-    throw new Error("Start the camera before taking a snapshot.");
-  }
-
-  const width = cameraPreviewNode.videoWidth || 1280;
-  const height = cameraPreviewNode.videoHeight || 720;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-
-  const context = canvas.getContext("2d");
-  if (!context) {
-    throw new Error("Could not capture a camera snapshot.");
-  }
-
-  context.drawImage(cameraPreviewNode, 0, 0, width, height);
-
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error("Camera snapshot failed."));
-          return;
-        }
-
-        const label = `Camera snapshot ${new Date().toLocaleTimeString()}`;
-        resolve({
-          url: URL.createObjectURL(blob),
-          label,
-          revoke: true,
-        });
-      },
-      "image/jpeg",
-      0.92
-    );
-  });
-}
-
-function pickRecordingMimeType() {
-  if (typeof MediaRecorder === "undefined") {
-    return undefined;
-  }
-
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-  ];
-
-  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-}
-
-async function startMicrophoneRecording() {
-  if (isRecording) {
-    return;
-  }
-
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Microphone access is unavailable in this browser.");
-  }
-
-  if (typeof MediaRecorder === "undefined") {
-    throw new Error("MediaRecorder is unavailable in this browser.");
-  }
-
-  microphoneStream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
-  });
-
-  const mimeType = pickRecordingMimeType();
-  mediaRecorder = mimeType
-    ? new MediaRecorder(microphoneStream, { mimeType })
-    : new MediaRecorder(microphoneStream);
-
-  discardNextRecording = false;
-  recordedChunks = [];
-
-  mediaRecorder.addEventListener("dataavailable", (event) => {
-    if (event.data.size > 0) {
-      recordedChunks.push(event.data);
-    }
-  });
-
-  mediaRecorder.addEventListener(
-    "stop",
-    () => {
-      isRecording = false;
-      stopMicrophoneStream();
-
-      if (discardNextRecording) {
-        discardNextRecording = false;
-        mediaRecorder = null;
-        recordedChunks = [];
-        syncUi();
-        return;
-      }
-
-      if (recordedChunks.length === 0) {
-        setAudioStatus("Recording stopped, but no audio data was captured.");
-        mediaRecorder = null;
-        syncUi();
-        return;
-      }
-
-      const mime = mediaRecorder?.mimeType || mimeType || "audio/webm";
-      const blob = new Blob(recordedChunks, { type: mime });
-      setAudioSelection({
-        blob,
-        url: URL.createObjectURL(blob),
-        label: `Microphone clip (${formatBytes(blob.size)})`,
-        revoke: true,
-      });
-      recordedChunks = [];
-      mediaRecorder = null;
-      setAudioStatus("Microphone recording captured. Analyze it when ready.");
-      syncUi();
-    },
-    { once: true }
-  );
-
-  mediaRecorder.start();
-  isRecording = true;
-  setAudioStatus("Recording from the microphone...");
-  syncUi();
-}
-
-function stopMicrophoneRecording() {
-  if (!mediaRecorder || mediaRecorder.state !== "recording") {
-    return;
-  }
-
-  mediaRecorder.stop();
-}
-
-function encodeAudioBufferToMonoWav(audioBuffer) {
-  const sampleRate = audioBuffer.sampleRate;
-  const frameCount = audioBuffer.length;
-  const channelCount = audioBuffer.numberOfChannels;
-  const mono = new Float32Array(frameCount);
-
-  for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
-    const channelData = audioBuffer.getChannelData(channelIndex);
-    for (let index = 0; index < frameCount; index += 1) {
-      mono[index] += channelData[index] / channelCount;
-    }
-  }
-
-  const buffer = new ArrayBuffer(44 + frameCount * 2);
-  const view = new DataView(buffer);
-
-  const writeAscii = (offset, text) => {
-    for (let index = 0; index < text.length; index += 1) {
-      view.setUint8(offset + index, text.charCodeAt(index));
-    }
-  };
-
-  writeAscii(0, "RIFF");
-  view.setUint32(4, 36 + frameCount * 2, true);
-  writeAscii(8, "WAVE");
-  writeAscii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeAscii(36, "data");
-  view.setUint32(40, frameCount * 2, true);
-
-  let offset = 44;
-  for (let index = 0; index < frameCount; index += 1) {
-    const sample = Math.max(-1, Math.min(1, mono[index]));
-    view.setInt16(
-      offset,
-      sample < 0 ? sample * 0x8000 : sample * 0x7fff,
-      true
-    );
-    offset += 2;
-  }
-
-  return new Uint8Array(buffer);
-}
-
-async function wavBytesToBase64(wavBytes) {
-  const blob = new Blob([wavBytes], {
-    type: "audio/wav",
-  });
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not base64-encode audio."));
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string" || !result.includes(",")) {
-        reject(new Error("Could not base64-encode audio."));
-        return;
-      }
-
-      resolve(result.split(",")[1]);
-    };
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function audioBlobToModelInput(blob) {
-  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextCtor) {
-    throw new Error("The Web Audio API is unavailable in this browser.");
-  }
-
-  const audioContext = new AudioContextCtor();
-  try {
-    const arrayBuffer = await blob.arrayBuffer();
-    const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-    const wavBytes = encodeAudioBufferToMonoWav(decoded);
-    const data = await wavBytesToBase64(wavBytes);
-    return {
-      data,
-      format: "wav",
-    };
-  } catch (error) {
-    throw new Error(
-      `Audio decoding failed: ${extractErrorMessage(
-        error,
-        "Unknown audio decode failure."
-      )}`
-    );
-  } finally {
-    await audioContext.close().catch(() => {});
-  }
-}
-
-async function runImageAnalysis() {
-  if (!model || !selectedImage || isRunning) {
-    return;
-  }
-
-  const prompt = imagePromptInput.value.trim();
-  if (!prompt) {
-    setImageStatus("Enter an image prompt before analyzing.");
-    return;
-  }
-
-  isRunning = true;
-  syncUi();
-  setStatus("Analyzing image...", "working");
-  appendMessage("user", "Image Prompt", `${prompt}\n\nSource: ${selectedImage.label}`);
-
-  try {
-    const response = await model.invoke([
-      new HumanMessage({
-        content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: selectedImage.url } },
-        ],
-      }),
-    ]);
-
-    appendMessage(
-      "assistant",
-      "Image Analysis",
-      extractResponseText(response) || "(empty output)"
-    );
-    setStatus("Model ready.", "ready");
-    setImageStatus(`Analyzed: ${selectedImage.label}`);
-  } catch (error) {
-    const message = extractErrorMessage(error, "Unknown image analysis error.");
-    appendMessage("error", "Image Error", message);
-    setStatus(message, "error");
-    setImageStatus(message);
-  } finally {
-    isRunning = false;
-    syncUi();
-  }
-}
-
-async function runAudioAnalysis() {
-  if (!model || !selectedAudio || isRunning) {
-    return;
-  }
-
-  const prompt = audioPromptInput.value.trim();
-  if (!prompt) {
-    setAudioStatus("Enter an audio prompt before analyzing.");
-    return;
-  }
-
-  isRunning = true;
-  syncUi();
-  setStatus("Converting audio for model input...", "working");
-  appendMessage("user", "Audio Prompt", `${prompt}\n\nSource: ${selectedAudio.label}`);
-
-  try {
-    const inputAudio = await audioBlobToModelInput(selectedAudio.blob);
-    setStatus("Analyzing audio...", "working");
-    const response = await model.invoke([
-      new HumanMessage({
-        content: [
-          { type: "text", text: prompt },
-          { type: "input_audio", input_audio: inputAudio },
-        ],
-      }),
-    ]);
-
-    appendMessage(
-      "assistant",
-      "Audio Analysis",
-      extractResponseText(response) || "(empty output)"
-    );
-    setStatus("Model ready.", "ready");
-    setAudioStatus(`Analyzed: ${selectedAudio.label}`);
-  } catch (error) {
-    const message = extractErrorMessage(error, "Unknown audio analysis error.");
-    appendMessage("error", "Audio Error", message);
-    setStatus(message, "error");
-    setAudioStatus(message);
-  } finally {
-    isRunning = false;
-    syncUi();
-  }
-}
-
 initButton.addEventListener("click", async () => {
   if (isInitializing || model !== null) {
     return;
@@ -1236,7 +711,7 @@ initButton.addEventListener("click", async () => {
     appendMessage(
       "system",
       "Init",
-      "Model initialized. The agent is ready for local tool-calling prompts and direct image/audio analysis."
+      "Model initialized. The local tool-calling agent is ready."
     );
   } catch (error) {
     if (attemptId !== initAttemptId && error?.name === "AbortError") {
@@ -1272,7 +747,6 @@ resetButton.addEventListener("click", () => {
     announce:
       model !== null ||
       agentExecutor !== null ||
-      isRecording ||
       statusNode.dataset.mode === "error",
   });
 });
@@ -1290,9 +764,7 @@ sendButton.addEventListener("click", async () => {
   setStatus("Running agent...", "working");
 
   try {
-    const result = await agentExecutor.invoke({
-      input,
-    });
+    const result = await agentExecutor.invoke({ input });
 
     for (const step of result.intermediateSteps ?? []) {
       appendMessage(
@@ -1326,89 +798,6 @@ promptInput.addEventListener("keydown", (event) => {
     event.preventDefault();
     sendButton.click();
   }
-});
-
-imageUploadInput.addEventListener("change", () => {
-  const file = imageUploadInput.files?.[0];
-  if (!file) {
-    setImageSelection(null);
-    return;
-  }
-
-  setImageSelection({
-    url: URL.createObjectURL(file),
-    label: `${file.name} (${formatBytes(file.size)})`,
-    revoke: true,
-  });
-});
-
-startCameraButton.addEventListener("click", async () => {
-  try {
-    await startCameraPreview();
-  } catch (error) {
-    const message = extractErrorMessage(error, "Camera startup failed.");
-    setImageStatus(message);
-    appendMessage("error", "Camera Error", message);
-  }
-});
-
-captureImageButton.addEventListener("click", async () => {
-  try {
-    const snapshot = await captureCameraSnapshot();
-    setImageSelection(snapshot);
-    setImageStatus(`Captured: ${snapshot.label}`);
-  } catch (error) {
-    const message = extractErrorMessage(error, "Camera snapshot failed.");
-    setImageStatus(message);
-    appendMessage("error", "Camera Error", message);
-  }
-});
-
-stopCameraButton.addEventListener("click", () => {
-  stopCameraStream();
-  if (selectedImage) {
-    setImageStatus(`Ready: ${selectedImage.label}`);
-  } else {
-    setImageStatus("Camera stopped. Upload an image or start the camera again.");
-  }
-  syncUi();
-});
-
-analyzeImageButton.addEventListener("click", async () => {
-  await runImageAnalysis();
-});
-
-audioUploadInput.addEventListener("change", () => {
-  const file = audioUploadInput.files?.[0];
-  if (!file) {
-    setAudioSelection(null);
-    return;
-  }
-
-  setAudioSelection({
-    blob: file,
-    url: URL.createObjectURL(file),
-    label: `${file.name} (${formatBytes(file.size)})`,
-    revoke: true,
-  });
-});
-
-startRecordingButton.addEventListener("click", async () => {
-  try {
-    await startMicrophoneRecording();
-  } catch (error) {
-    const message = extractErrorMessage(error, "Microphone recording failed.");
-    setAudioStatus(message);
-    appendMessage("error", "Microphone Error", message);
-  }
-});
-
-stopRecordingButton.addEventListener("click", () => {
-  stopMicrophoneRecording();
-});
-
-analyzeAudioButton.addEventListener("click", async () => {
-  await runAudioAnalysis();
 });
 
 syncUi();
