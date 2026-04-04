@@ -6,7 +6,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm run build
+RUN pnpm run sync:assets && pnpm run build
 
 FROM nginxinc/nginx-unprivileged:1.29.2-alpine
 
