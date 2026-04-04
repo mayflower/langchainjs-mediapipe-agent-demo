@@ -116,7 +116,7 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr auto auto;
   min-height: calc(100vh - 48px);
 }
 
@@ -193,6 +193,13 @@ textarea:focus {
 .actions {
   display: flex;
   justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-top: 14px;
 }
 
@@ -300,6 +307,104 @@ button:disabled {
   font-size: 0.88rem;
 }
 
+.download-panel {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.download-panel progress {
+  width: 100%;
+  height: 12px;
+  margin-top: 16px;
+  accent-color: var(--accent);
+}
+
+.download-status {
+  margin: 12px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.multimodal {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 0 24px 24px;
+}
+
+.media-panel {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.media-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.media-header p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.file-picker {
+  display: block;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.file-picker span {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.file-picker input {
+  width: 100%;
+}
+
+.media-preview-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.image-preview,
+.camera-preview {
+  width: 100%;
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(240, 234, 226, 0.9);
+  object-fit: cover;
+}
+
+.audio-preview {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.media-status {
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 @media (max-width: 920px) {
   .shell {
     grid-template-columns: 1fr;
@@ -307,5 +412,9 @@ button:disabled {
 
   .workspace {
     min-height: 70vh;
+  }
+
+  .multimodal {
+    grid-template-columns: 1fr;
   }
 }

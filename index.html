@@ -79,6 +79,18 @@
             </div>
           </dl>
         </section>
+
+        <section class="download-panel" aria-labelledby="download-heading">
+          <div class="diagnostics-header">
+            <h2 id="download-heading">Model Download</h2>
+            <p>
+              Byte progress is shown while the browser reads the Gemma model
+              asset before inference creation.
+            </p>
+          </div>
+          <progress id="download-progress" max="1" value="0"></progress>
+          <p id="download-status" class="download-status">Not started.</p>
+        </section>
       </aside>
 
       <main class="panel workspace">
@@ -89,6 +101,99 @@
               Initialize the model, then ask for weather, time, or math. The
               agent runs locally in the browser and decides when to call tools.
             </p>
+          </article>
+        </section>
+
+        <section class="multimodal">
+          <article class="media-panel">
+            <div class="media-header">
+              <h2>Image Analysis</h2>
+              <p>Upload an image or capture one camera snapshot, then ask the model about it directly.</p>
+            </div>
+
+            <label class="file-picker">
+              <span>Upload image</span>
+              <input id="image-upload" type="file" accept="image/*" />
+            </label>
+
+            <div class="media-preview-stack">
+              <img
+                id="image-preview"
+                class="image-preview"
+                alt="Selected image preview"
+                hidden
+              />
+              <video
+                id="camera-preview"
+                class="camera-preview"
+                autoplay
+                playsinline
+                muted
+                hidden
+              ></video>
+            </div>
+
+            <p id="image-status" class="media-status">No image selected.</p>
+
+            <div class="media-actions">
+              <button id="start-camera-button" class="secondary">Start Camera</button>
+              <button id="capture-image-button" class="secondary" disabled>
+                Take Snapshot
+              </button>
+              <button id="stop-camera-button" class="secondary" disabled>
+                Stop Camera
+              </button>
+            </div>
+
+            <label class="composer-label" for="image-prompt">Image Prompt</label>
+            <textarea
+              id="image-prompt"
+              rows="3"
+              placeholder="Describe the important details in this image."
+            >Describe the important details in this image.</textarea>
+
+            <div class="actions">
+              <button id="analyze-image-button" class="primary" disabled>
+                Analyze Image
+              </button>
+            </div>
+          </article>
+
+          <article class="media-panel">
+            <div class="media-header">
+              <h2>Audio Analysis</h2>
+              <p>Upload audio or record a short clip with your microphone for transcription or summarization.</p>
+            </div>
+
+            <label class="file-picker">
+              <span>Upload audio</span>
+              <input id="audio-upload" type="file" accept="audio/*" />
+            </label>
+
+            <audio id="audio-preview" class="audio-preview" controls hidden></audio>
+            <p id="audio-status" class="media-status">No audio selected.</p>
+
+            <div class="media-actions">
+              <button id="start-recording-button" class="secondary">
+                Start Recording
+              </button>
+              <button id="stop-recording-button" class="secondary" disabled>
+                Stop Recording
+              </button>
+            </div>
+
+            <label class="composer-label" for="audio-prompt">Audio Prompt</label>
+            <textarea
+              id="audio-prompt"
+              rows="3"
+              placeholder="Transcribe this audio and summarize it briefly."
+            >Transcribe this audio and summarize it briefly.</textarea>
+
+            <div class="actions">
+              <button id="analyze-audio-button" class="primary" disabled>
+                Analyze Audio
+              </button>
+            </div>
           </article>
         </section>
 
