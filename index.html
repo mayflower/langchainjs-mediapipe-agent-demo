@@ -12,26 +12,31 @@
   <body>
     <div class="shell">
       <aside class="panel intro">
-        <p class="eyebrow">Standalone Demo</p>
-        <h1>Gemma 4 Browser Lab</h1>
-        <p class="lede">
-          Browser only langchain deepagent
-        </p>
+        <div class="intro-header">
+          <p class="eyebrow">Standalone Demo</p>
+          <h1>Gemma 4 Browser Lab</h1>
+          <p class="lede">
+            Browser only langchain deepagent
+          </p>
+        </div>
 
-        <dl class="facts compact-facts">
-          <div>
-            <dt>Model</dt>
-            <dd><code>gemma-4-E2B-it-web.task</code></dd>
-          </div>
-          <div>
-            <dt>Runtime</dt>
-            <dd><code>WebGPU + MediaPipe + wasmsh</code></dd>
-          </div>
-          <div>
-            <dt>Agent</dt>
-            <dd><code>deepagentsjs</code></dd>
-          </div>
-        </dl>
+        <section class="info-panel environment-panel">
+          <h2>Environment</h2>
+          <dl class="facts compact-facts">
+            <div>
+              <dt>Model</dt>
+              <dd><code>gemma-4-E2B-it-web.task</code></dd>
+            </div>
+            <div>
+              <dt>Runtime</dt>
+              <dd><code>WebGPU + MediaPipe + wasmsh</code></dd>
+            </div>
+            <div>
+              <dt>Agent</dt>
+              <dd><code>deepagentsjs</code></dd>
+            </div>
+          </dl>
+        </section>
 
         <section class="init-card">
           <div class="controls">
@@ -69,13 +74,13 @@
           <section class="transcript-wrap">
             <div class="section-head">
               <div>
+                <p class="section-kicker">On-device session</p>
                 <h2>Transcript</h2>
+                <p class="section-copy">
+                  Ask the browser deep agent to inspect files, edit code, or run shell/Python inside
+                  <code>/workspace</code>.
+                </p>
               </div>
-              <p class="section-copy">
-                Initialize the model and sandbox, then ask the browser deep agent
-                to inspect files, edit code, or run shell/Python inside
-                <code>/workspace</code>.
-              </p>
             </div>
 
             <section id="transcript" class="transcript" aria-live="polite"></section>
@@ -87,32 +92,38 @@
                 rows="3"
                 placeholder="Example: Inspect /workspace, summarize the CSV, and update report.py so it prints a friendlier sentence."
               ></textarea>
+              <p class="composer-hint">Press Enter to run. Shift+Enter inserts a newline.</p>
               <div class="actions">
                 <button id="send-button" class="primary" disabled>Run Agent</button>
               </div>
             </section>
           </section>
 
-          <aside class="side-rail">
-            <section class="info-panel">
-              <h2>Plan / Todos</h2>
+          <aside class="info-panel inspector-panel">
+            <div class="inspector-head">
+              <h2>Inspector</h2>
+              <p>Live agent state and sandbox context.</p>
+            </div>
+
+            <details class="inspector-section" open>
+              <summary>Plan / Todos</summary>
               <div id="todos-panel" class="todo-list"></div>
-            </section>
+            </details>
 
-            <section class="info-panel">
-              <h2>Workspace</h2>
+            <details class="inspector-section" open>
+              <summary>Workspace</summary>
               <pre id="workspace-panel" class="panel-pre"></pre>
-            </section>
+            </details>
 
-            <section class="info-panel">
-              <h2>Sandbox</h2>
+            <details class="inspector-section" open>
+              <summary>Sandbox</summary>
               <pre id="sandbox-panel" class="panel-pre"></pre>
-            </section>
+            </details>
 
-            <section class="info-panel">
-              <h2>Debug Log</h2>
+            <details class="inspector-section">
+              <summary>Debug Log</summary>
               <pre id="debug-panel" class="panel-pre debug-log"></pre>
-            </section>
+            </details>
           </aside>
         </div>
       </main>
