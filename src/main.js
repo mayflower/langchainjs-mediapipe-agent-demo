@@ -1084,21 +1084,6 @@ async function buildDeepAgent(attemptId) {
   await runRuntimeCompatibilityPreflight();
   throwIfAttemptStale(attemptId);
 
-  appendMessage(
-    "system",
-    "Model Preflight",
-    [
-      `Resolved model URL: ${modelAsset.path}`,
-      `Content-Type: ${modelAsset.contentType}`,
-      `Content-Length: ${formatBytes(modelAsset.contentLength)}`,
-      `Resolved MediaPipe runtime: ${mediapipeRuntime.path}`,
-      `Resolved wasmsh worker: ${sandboxWorker.path}`,
-      `Resolved wasmsh library: ${sandboxLibrary.path}`,
-      `Sandbox assets: ${SANDBOX_ASSET_BASE_URL}`,
-      "Expected size is roughly 2.0 GB for the real Gemma 4 E2B web model.",
-    ].join("\n")
-  );
-
   const { modelAssetBuffer, progressPromise } = await prepareModelAssetBuffer(
     modelAsset,
     attemptId
