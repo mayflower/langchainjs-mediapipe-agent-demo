@@ -6,12 +6,20 @@
     "build": "vite build",
     "dev": "vite",
     "start": "vite",
-    "sync:assets": "node ./scripts/sync-assets.mjs"
+    "sync:assets": "node ./scripts/sync-assets.mjs",
+    "sync:vendor": "node ./scripts/sync-deepagents-vendor.mjs"
   },
   "dependencies": {
-    "@langchain/classic": "^1.0.27",
+    "@langchain/anthropic": "^1.3.26",
     "@langchain/core": "^1.1.38",
+    "@langchain/langgraph": "^1.2.6",
+    "@langchain/langgraph-sdk": "^1.8.0",
+    "@mayflowergmbh/wasmsh-pyodide": "^0.5.2",
     "@mediapipe/tasks-genai": "^0.10.27",
+    "langchain": "^1.2.39",
+    "micromatch": "^4.0.8",
+    "path-browserify": "^1.0.1",
+    "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -1,12 +1,12 @@
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
-import { tool } from "@langchain/core/tools";
 import {
-  AgentExecutor,
-  createToolCallingAgent,
-} from "@langchain/classic/agents";
+  AIMessage,
+  AIMessageChunk,
+  HumanMessage,
+  ToolMessage,
+} from "@langchain/core/messages";
+import { createDeepAgent } from "deepagents";
+import { WasmshSandbox } from "@langchain/wasmsh";
 import { ChatMediaPipeGenAI } from "./vendor/langchain-community/chat_models/mediapipe_genai.js";
-import { z } from "zod";
 
 const initButton = document.getElementById("init-button");
 const resetButton = document.getElementById("reset-button");
@@ -14,14 +14,12 @@ const sendButton = document.getElementById("send-button");
 const promptInput = document.getElementById("prompt-input");
 const statusNode = document.getElementById("status");
 const transcript = document.getElementById("transcript");
-
-const diagnosticsNodes = {
-  modelUrl: document.getElementById("diag-model-url"),
-  wasmRoot: document.getElementById("diag-wasm-root"),
-  webgpu: document.getElementById("diag-webgpu"),
-  adapter: document.getElementById("diag-adapter"),
-  stage: document.getElementById("diag-stage"),
-};
+const todosNode = document.getElementById("todos-panel");
+const workspaceNode = document.getElementById("workspace-panel");
+const sandboxNode = document.getElementById("sandbox-panel");
+const debugNode = document.getElementById("debug-panel");
+const downloadProgressNode = document.getElementById("download-progress");
+const downloadStatusNode = document.getElementById("download-status");
 
 const metricNodes = {
   outputTokens: document.getElementById("metric-output-tokens"),
@@ -29,11 +27,66 @@ const metricNodes = {
   llmCalls: document.getElementById("metric-llm-calls"),
 };
 
-const downloadProgressNode = document.getElementById("download-progress");
-const downloadStatusNode = document.getElementById("download-status");
+const WASM_ROOT = "/vendor/mediapipe/tasks-genai/wasm";
+const SANDBOX_WORKER_URL = "/vendor/wasmsh/browser-worker.js";
+const SANDBOX_ASSET_BASE_URL = "/vendor/wasmsh/assets";
+const SANDBOX_LIB_HEALTHCHECK = "/vendor/wasmsh/lib/protocol.mjs";
+const INIT_LONG_LOAD_MS = 20_000;
+const INIT_TIMEOUT_MS = 180_000;
+const MODEL_MAX_TOKENS = 12288;
+const MODEL_ASSET_PATH_CANDIDATES = [
+  "/models/gemma/gemma-4-E2B-it-web.task",
+  "/models/gemma-4-E2B-it-web.task",
+];
+const WASM_ENTRYPOINT = `${WASM_ROOT}/genai_wasm_internal.js`;
+const SEEDED_WORKSPACE_FILES = {
+  "/workspace/README.md": [
+    "# Gemma Browser Lab Workspace",
+    "",
+    "This sandbox is intentionally small and local-first.",
+    "",
+    "Suggested tasks:",
+    "- inspect the files in /workspace",
+    "- summarize the CSV in /workspace/data/expenses.csv",
+    "- edit /workspace/src/report.py to change the output wording",
+    "- create a new note under /workspace/notes/",
+    "",
+    "When you change files, mention the path in your final answer.",
+  ].join("\n"),
+  "/workspace/data/expenses.csv": [
+    "month,category,amount_eur",
+    "January,hosting,420",
+    "January,travel,180",
+    "February,hosting,420",
+    "February,software,210",
+    "March,hosting,420",
+    "March,events,640",
+  ].join("\n"),
+  "/workspace/src/report.py": [
+    "from pathlib import Path",
+    "",
+    "CSV_PATH = Path('/workspace/data/expenses.csv')",
+    "",
+    "def main():",
+    "    lines = CSV_PATH.read_text().strip().splitlines()[1:]",
+    "    total = sum(int(line.split(',')[2]) for line in lines)",
+    "    print(f'Total tracked spend: {total} EUR')",
+    "",
+    "if __name__ == '__main__':",
+    "    main()",
+  ].join("\n"),
+  "/workspace/notes/context.md": [
+    "# Context",
+    "",
+    "- This is a browser-only demo.",
+    "- Prefer concise answers after tool use.",
+    "- Use shell or Python when calculations matter.",
+  ].join("\n"),
+};
 
-let agentExecutor = null;
+let deepAgent = null;
 let model = null;
+let sandbox = null;
 let isInitializing = false;
 let isRunning = false;
 let initAttemptId = 0;
@@ -41,21 +94,11 @@ let initLongLoadTimer = null;
 let initTimeoutTimer = null;
 let initDownloadController = null;
 let isModelDownloadComplete = false;
-
-const WASM_ROOT = "/vendor/mediapipe/tasks-genai/wasm";
-const INIT_LONG_LOAD_MS = 20_000;
-const INIT_TIMEOUT_MS = 180_000;
-const MODEL_ASSET_PATH_CANDIDATES = [
-  "/models/gemma/gemma-4-E2B-it-web.task",
-  "/models/gemma-4-E2B-it-web.task",
-];
-const WASM_ENTRYPOINT = `${WASM_ROOT}/genai_wasm_internal.js`;
-const diagnostics = {
-  modelUrl: "unresolved",
-  wasmRoot: WASM_ROOT,
-  webgpu: "unchecked",
-  adapter: "unchecked",
-  stage: "idle",
+let activeStreamCards = new Map();
+let todoState = [];
+let sandboxState = {
+  status: "idle",
+  detail: "Sandbox not initialized.",
 };
 
 const runMetrics = {
@@ -67,6 +110,28 @@ const runMetrics = {
   firstTokenAt: 0,
   lastTokenAt: 0,
 };
+
+function debugTimestamp() {
+  return new Date().toLocaleTimeString("de-DE", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function resetDebugLog() {
+  debugNode.textContent = "";
+}
+
+function appendDebugLine(text) {
+  const line = `[${debugTimestamp()}] ${text}`;
+  debugNode.textContent = debugNode.textContent
+    ? `${debugNode.textContent}\n${line}`
+    : line;
+  debugNode.scrollTop = debugNode.scrollHeight;
+  console.log(line);
+}
 
 function formatBytes(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -92,10 +157,6 @@ function formatPercent(received, total) {
   return `${Math.min(100, (received / total) * 100).toFixed(1)}%`;
 }
 
-function extractErrorMessage(error, fallback) {
-  return error instanceof Error ? error.message : fallback;
-}
-
 function formatTokenRate(value) {
   if (!Number.isFinite(value) || value <= 0) {
     return "0.0";
@@ -104,224 +165,13 @@ function formatTokenRate(value) {
   return value.toFixed(value >= 100 ? 0 : 1);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Request failed with ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
-}
-
-function describeWeatherCode(code) {
-  const descriptions = {
-    0: "clear sky",
-    1: "mainly clear",
-    2: "partly cloudy",
-    3: "overcast",
-    45: "fog",
-    48: "depositing rime fog",
-    51: "light drizzle",
-    53: "moderate drizzle",
-    55: "dense drizzle",
-    56: "light freezing drizzle",
-    57: "dense freezing drizzle",
-    61: "slight rain",
-    63: "moderate rain",
-    65: "heavy rain",
-    66: "light freezing rain",
-    67: "heavy freezing rain",
-    71: "slight snow fall",
-    73: "moderate snow fall",
-    75: "heavy snow fall",
-    77: "snow grains",
-    80: "slight rain showers",
-    81: "moderate rain showers",
-    82: "violent rain showers",
-    85: "slight snow showers",
-    86: "heavy snow showers",
-    95: "thunderstorm",
-    96: "thunderstorm with slight hail",
-    99: "thunderstorm with heavy hail",
-  };
-
-  return descriptions[code] ?? "unknown conditions";
-}
-
-function validateModelAsset(modelAsset) {
-  const warnings = [];
-
-  if (modelAsset.contentType.toLowerCase().includes("text/html")) {
-    warnings.push(
-      "The server is returning HTML instead of a binary model file."
-    );
-  }
-
-  if (
-    Number.isFinite(modelAsset.contentLength) &&
-    modelAsset.contentLength > 0 &&
-    modelAsset.contentLength < 1_500_000_000
-  ) {
-    warnings.push(
-      "The file is much smaller than the expected ~2 GB Gemma 4 E2B web model."
-    );
-  }
-
-  if (warnings.length === 0) {
-    return;
-  }
-
-  throw new Error(
-    [
-      "The resolved model file does not look like a valid Gemma 4 web asset.",
-      `URL: ${modelAsset.path}`,
-      `Content-Type: ${modelAsset.contentType}`,
-      `Content-Length: ${formatBytes(modelAsset.contentLength)}`,
-      ...warnings.map((warning) => `- ${warning}`),
-    ].join("\n")
-  );
-}
-
-const weatherTool = tool(
-  async ({ location }) => {
-    const searchUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
-    searchUrl.search = new URLSearchParams({
-      name: location,
-      count: "1",
-      language: "en",
-      format: "json",
-    }).toString();
-
-    const geocoding = await fetchJson(searchUrl);
-    const match = geocoding.results?.[0];
-    if (!match) {
-      throw new Error(`No location match found for "${location}".`);
-    }
-
-    const forecastUrl = new URL("https://api.open-meteo.com/v1/forecast");
-    forecastUrl.search = new URLSearchParams({
-      latitude: String(match.latitude),
-      longitude: String(match.longitude),
-      current: [
-        "temperature_2m",
-        "apparent_temperature",
-        "relative_humidity_2m",
-        "weather_code",
-        "wind_speed_10m",
-      ].join(","),
-      timezone: "auto",
-    }).toString();
-
-    const forecast = await fetchJson(forecastUrl);
-    const current = forecast.current;
-    if (!current) {
-      throw new Error(`No current weather data returned for "${location}".`);
-    }
-
-    return JSON.stringify(
-      {
-        source: "Open-Meteo",
-        resolvedLocation: [match.name, match.admin1, match.country]
-          .filter(Boolean)
-          .join(", "),
-        latitude: match.latitude,
-        longitude: match.longitude,
-        timezone: forecast.timezone,
-        observationTime: current.time,
-        temperatureC: current.temperature_2m,
-        apparentTemperatureC: current.apparent_temperature,
-        relativeHumidity: current.relative_humidity_2m,
-        windSpeedKmh: current.wind_speed_10m,
-        weatherCode: current.weather_code,
-        weatherSummary: describeWeatherCode(current.weather_code),
-      },
-      null,
-      2
-    );
-  },
-  {
-    name: "get_current_weather",
-    description: "Get the current weather for a city using Open-Meteo.",
-    schema: z.object({
-      location: z.string().describe("City or place name."),
-    }),
-  }
-);
-
-const localTimeTool = tool(
-  async ({ location }) => {
-    const timeZoneMap = {
-      berlin: "Europe/Berlin",
-      paris: "Europe/Paris",
-      london: "Europe/London",
-      tokyo: "Asia/Tokyo",
-      "new york": "America/New_York",
-      "san francisco": "America/Los_Angeles",
-    };
-
-    const timeZone = timeZoneMap[location.trim().toLowerCase()] ?? "UTC";
-    return new Intl.DateTimeFormat("en-US", {
-      dateStyle: "full",
-      timeStyle: "long",
-      timeZone,
-    }).format(new Date());
-  },
-  {
-    name: "get_local_time",
-    description: "Get the local time for a city or place.",
-    schema: z.object({
-      location: z.string().describe("City or place name."),
-    }),
-  }
-);
-
-const calculatorTool = tool(
-  async ({ expression }) => {
-    if (!/^[0-9+\-*/().\s]+$/.test(expression)) {
-      throw new Error("Only basic arithmetic expressions are allowed.");
-    }
-
-    const value = Function(`"use strict"; return (${expression});`)();
-    if (typeof value !== "number" || Number.isNaN(value)) {
-      throw new Error("Expression did not evaluate to a valid number.");
-    }
-
-    return String(value);
-  },
-  {
-    name: "calculate",
-    description: "Evaluate a basic arithmetic expression.",
-    schema: z.object({
-      expression: z.string().describe("Arithmetic expression like 17 * 6"),
-    }),
-  }
-);
-
-function appendMessage(kind, title, body) {
-  const card = document.createElement("article");
-  card.className = `message ${kind}`;
-
-  const heading = document.createElement("h2");
-  heading.textContent = title;
-
-  const content = document.createElement("pre");
-  content.textContent = body;
-
-  card.append(heading, content);
-  transcript.appendChild(card);
-  transcript.scrollTop = transcript.scrollHeight;
+function extractErrorMessage(error, fallback) {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function setStatus(text, mode = "idle") {
   statusNode.textContent = text;
   statusNode.dataset.mode = mode;
-}
-
-function setDiagnostic(key, value) {
-  diagnostics[key] = value;
-  if (diagnosticsNodes[key]) {
-    diagnosticsNodes[key].textContent = value;
-  }
 }
 
 function setRunMetric(key, value) {
@@ -395,80 +245,273 @@ function throwIfAttemptStale(attemptId) {
   }
 }
 
-function resetDemoState(options = {}) {
-  const { announce = false } = options;
-  initAttemptId += 1;
-  clearInitTimers();
-  abortModelDownload();
+function appendMessage(kind, title, body) {
+  const card = document.createElement("article");
+  card.className = `message ${kind}`;
 
-  model = null;
-  agentExecutor = null;
-  isInitializing = false;
-  isRunning = false;
+  const heading = document.createElement("h2");
+  heading.textContent = title;
 
-  setStatus("Idle.", "idle");
-  setDiagnostic("modelUrl", "unresolved");
-  setDiagnostic("wasmRoot", WASM_ROOT);
-  setDiagnostic("webgpu", "unchecked");
-  setDiagnostic("adapter", "unchecked");
-  setDiagnostic("stage", "idle");
-  resetDownloadProgress();
-  resetRunMetrics();
+  const content = document.createElement("pre");
+  content.textContent = body;
 
-  if (announce) {
-    appendMessage(
-      "system",
-      "Reset",
-      "Local model state was cleared. You can initialize again without reloading the page."
-    );
+  card.append(heading, content);
+  transcript.appendChild(card);
+  transcript.scrollTop = transcript.scrollHeight;
+  return content;
+}
+
+function getOrCreateStreamCard(key, kind, title) {
+  let card = activeStreamCards.get(key);
+  if (card) {
+    return card;
   }
 
-  syncUi();
+  const content = appendMessage(kind, title, "");
+  card = { content };
+  activeStreamCards.set(key, card);
+  return card;
 }
 
-function createRunMetricsHandler() {
-  const handler = BaseCallbackHandler.fromMethods({
-    handleChatModelStart() {
-      runMetrics.llmCalls += 1;
-      setRunMetric("llmCalls", String(runMetrics.llmCalls));
-    },
-    handleLLMNewToken(token) {
-      const now = performance.now();
-      if (!runMetrics.firstTokenAt) {
-        runMetrics.firstTokenAt = now;
+function resetStreamCards() {
+  activeStreamCards = new Map();
+}
+
+function getSourceKey(namespace) {
+  const subagentNamespace = namespace.find((segment) =>
+    segment.startsWith("tools:")
+  );
+  return subagentNamespace ?? "main";
+}
+
+function getSourceLabel(sourceKey) {
+  if (sourceKey === "main") {
+    return "Agent";
+  }
+
+  return `Subagent ${sourceKey.slice(-6)}`;
+}
+
+function extractTextParts(parts) {
+  if (!Array.isArray(parts)) {
+    return "";
+  }
+
+  return parts
+    .filter((item) => item?.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("");
+}
+
+function getMessageText(message) {
+  if (typeof message?.text === "string" && message.text) {
+    return message.text;
+  }
+
+  if (Array.isArray(message?.contentBlocks)) {
+    return extractTextParts(message.contentBlocks);
+  }
+
+  if (Array.isArray(message?.content_blocks)) {
+    return extractTextParts(message.content_blocks);
+  }
+
+  if (Array.isArray(message?.content)) {
+    return extractTextParts(message.content);
+  }
+
+  if (typeof message?.content === "string") {
+    return message.content;
+  }
+
+  return "";
+}
+
+function isToolMessageLike(message) {
+  return (
+    ToolMessage.isInstance(message) ||
+    message?.type === "tool" ||
+    typeof message?.tool_call_id === "string"
+  );
+}
+
+function getToolCallChunks(message) {
+  if (Array.isArray(message?.tool_call_chunks)) {
+    return message.tool_call_chunks;
+  }
+
+  if (Array.isArray(message?.toolCallChunks)) {
+    return message.toolCallChunks;
+  }
+
+  return [];
+}
+
+function summarizeMessageForDebug(message) {
+  if (!message || typeof message !== "object") {
+    return String(message);
+  }
+
+  let contentSummary = null;
+  if (typeof message.content === "string") {
+    contentSummary = message.content.slice(0, 200);
+  } else if (Array.isArray(message.content)) {
+    contentSummary = message.content.slice(0, 3).map((item) => {
+      if (typeof item === "string") {
+        return item.slice(0, 120);
       }
-      runMetrics.lastTokenAt = now;
-      runMetrics.outputText += token;
-    },
-  });
+      if (item && typeof item === "object") {
+        return {
+          type: item.type ?? null,
+          text:
+            typeof item.text === "string" ? item.text.slice(0, 120) : null,
+          keys: Object.keys(item).slice(0, 8),
+        };
+      }
+      return item;
+    });
+  }
 
-  handler.lc_prefer_streaming = true;
-  return handler;
+  const summary = {
+    ctor: message.constructor?.name ?? "Object",
+    type: message.type ?? null,
+    keys: Object.keys(message).slice(0, 12),
+    text: getMessageText(message).slice(0, 120),
+    content: contentSummary,
+    toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls.length : 0,
+    toolCallChunks: getToolCallChunks(message).length,
+    invalidToolCalls: Array.isArray(message.invalid_tool_calls)
+      ? message.invalid_tool_calls.length
+      : 0,
+    name: message.name ?? null,
+    additionalKwargs:
+      message.additional_kwargs && typeof message.additional_kwargs === "object"
+        ? Object.fromEntries(
+            Object.entries(message.additional_kwargs).slice(0, 8)
+          )
+        : null,
+    responseMetadata:
+      message.response_metadata &&
+      typeof message.response_metadata === "object"
+        ? Object.fromEntries(
+            Object.entries(message.response_metadata).slice(0, 8)
+          )
+        : null,
+  };
+
+  return JSON.stringify(summary);
 }
 
-async function finalizeRunMetrics() {
-  if (!model) {
-    resetRunMetrics();
+function normalizeTodoItems(value) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const todos = value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const text =
+        item.content ?? item.task ?? item.title ?? item.description ?? null;
+      if (typeof text !== "string" || !text.trim()) {
+        return null;
+      }
+
+      return {
+        content: text.trim(),
+        status:
+          typeof item.status === "string" && item.status.trim()
+            ? item.status.trim()
+            : "pending",
+      };
+    })
+    .filter(Boolean);
+
+  return todos.length ? todos : [];
+}
+
+function renderTodos(items = todoState) {
+  todosNode.innerHTML = "";
+
+  if (!items.length) {
+    todosNode.textContent =
+      "No explicit todo plan yet. The deep agent will surface one when it decides to use write_todos.";
     return;
   }
 
-  if (runMetrics.outputText) {
-    runMetrics.outputTokens = await model.getNumTokens(runMetrics.outputText);
-  } else {
-    runMetrics.outputTokens = 0;
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "todo-item";
+    row.dataset.status = item.status.toLowerCase();
+
+    const status = document.createElement("span");
+    status.className = "todo-status";
+    status.textContent = item.status;
+
+    const text = document.createElement("span");
+    text.className = "todo-text";
+    text.textContent = item.content;
+
+    row.append(status, text);
+    todosNode.appendChild(row);
+  }
+}
+
+function updateTodos(items) {
+  const normalized = normalizeTodoItems(items);
+  if (!normalized) {
+    return;
   }
 
-  const startedAt = runMetrics.firstTokenAt || runMetrics.startedAt;
-  const endedAt = runMetrics.lastTokenAt || performance.now();
-  const elapsedSeconds =
-    startedAt && endedAt > startedAt ? (endedAt - startedAt) / 1000 : 0;
+  todoState = normalized;
+  renderTodos();
+}
 
-  runMetrics.tokenRate =
-    elapsedSeconds > 0 ? runMetrics.outputTokens / elapsedSeconds : 0;
+function setSandboxState(status, detail) {
+  sandboxState = { status, detail };
+  renderSandboxPanel();
+}
 
-  setRunMetric("outputTokens", String(runMetrics.outputTokens));
-  setRunMetric("tokenRate", formatTokenRate(runMetrics.tokenRate));
-  setRunMetric("llmCalls", String(runMetrics.llmCalls));
+function renderSandboxPanel() {
+  const lines = [
+    `State: ${sandboxState.status}`,
+    `Detail: ${sandboxState.detail}`,
+    `Worker URL: ${SANDBOX_WORKER_URL}`,
+    `Asset Base: ${SANDBOX_ASSET_BASE_URL}`,
+    `Workspace: /workspace`,
+    `Sandbox ID: ${sandbox?.id ?? "not initialized"}`,
+  ];
+
+  sandboxNode.textContent = lines.join("\n");
+}
+
+async function refreshWorkspacePanel() {
+  if (!sandbox) {
+    workspaceNode.textContent =
+      "Workspace unavailable until the browser sandbox is initialized.";
+    return;
+  }
+
+  try {
+    const result = await sandbox.execute(
+      "find /workspace -maxdepth 3 \\( -type d -o -type f \\) | sort"
+    );
+
+    if (result.exitCode !== 0) {
+      workspaceNode.textContent = result.output || "Workspace listing failed.";
+      return;
+    }
+
+    workspaceNode.textContent =
+      result.output.trim() || "/workspace is currently empty.";
+  } catch (error) {
+    workspaceNode.textContent = `Workspace refresh failed: ${extractErrorMessage(
+      error,
+      "Unknown error."
+    )}`;
+  }
 }
 
 function syncUi() {
@@ -477,19 +520,18 @@ function syncUi() {
     isRunning ||
     (!isInitializing &&
       model === null &&
-      agentExecutor === null &&
-      statusNode.dataset.mode !== "error" &&
-      diagnostics.stage === "idle");
+      deepAgent === null &&
+      statusNode.dataset.mode !== "error");
 
-  sendButton.disabled = isInitializing || isRunning || agentExecutor === null;
-  promptInput.disabled = isInitializing || isRunning || agentExecutor === null;
+  sendButton.disabled = isInitializing || isRunning || deepAgent === null;
+  promptInput.disabled = isInitializing || isRunning || deepAgent === null;
 }
 
-async function resolveWasmAsset() {
-  const response = await fetch(WASM_ENTRYPOINT, { method: "HEAD" });
+async function resolveStaticAsset(path, label) {
+  const response = await fetch(path, { method: "HEAD" });
   if (!response.ok) {
     throw new Error(
-      `MediaPipe runtime asset check failed for ${WASM_ENTRYPOINT} with ${response.status} ${response.statusText}.`
+      `${label} check failed for ${path} with ${response.status} ${response.statusText}.`
     );
   }
 
@@ -497,14 +539,46 @@ async function resolveWasmAsset() {
     response.headers.get("content-type") ?? "unknown content type";
   if (contentType.toLowerCase().includes("text/html")) {
     throw new Error(
-      `MediaPipe runtime asset check failed for ${WASM_ENTRYPOINT}: the server returned HTML instead of JavaScript.`
+      `${label} check failed for ${path}: the server returned HTML instead of the expected asset.`
     );
   }
 
   return {
-    path: WASM_ENTRYPOINT,
+    path,
     contentType,
   };
+}
+
+function validateModelAsset(modelAsset) {
+  const warnings = [];
+
+  if (modelAsset.contentType.toLowerCase().includes("text/html")) {
+    warnings.push("The server is returning HTML instead of a binary model file.");
+  }
+
+  if (
+    Number.isFinite(modelAsset.contentLength) &&
+    modelAsset.contentLength > 0 &&
+    modelAsset.contentLength < 1_500_000_000
+  ) {
+    warnings.push(
+      "The file is much smaller than the expected ~2 GB Gemma 4 E2B web model."
+    );
+  }
+
+  if (warnings.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    [
+      "The resolved model file does not look like a valid Gemma 4 web asset.",
+      `URL: ${modelAsset.path}`,
+      `Content-Type: ${modelAsset.contentType}`,
+      `Content-Length: ${formatBytes(modelAsset.contentLength)}`,
+      ...warnings.map((warning) => `- ${warning}`),
+    ].join("\n")
+  );
 }
 
 async function resolveModelAssetPath() {
@@ -571,7 +645,6 @@ async function consumeModelDownloadProgress(stream, total, attemptId) {
 
 async function prepareModelAssetBuffer(modelAsset, attemptId) {
   throwIfAttemptStale(attemptId);
-  setDiagnostic("stage", "downloading-model");
   setStatus("Downloading model asset...", "working");
   setDownloadProgress(
     0,
@@ -582,6 +655,7 @@ async function prepareModelAssetBuffer(modelAsset, attemptId) {
   const controller = new AbortController();
   initDownloadController = controller;
   let response;
+
   try {
     response = await fetch(modelAsset.path, {
       signal: controller.signal,
@@ -591,6 +665,7 @@ async function prepareModelAssetBuffer(modelAsset, attemptId) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw error;
     }
+
     throw new Error(
       `Model download failed before inference creation: ${extractErrorMessage(
         error,
@@ -638,29 +713,20 @@ async function prepareModelAssetBuffer(modelAsset, attemptId) {
 }
 
 async function runRuntimeCompatibilityPreflight() {
-  setDiagnostic("stage", "runtime preflight");
-  setDiagnostic("wasmRoot", WASM_ROOT);
-
   if (
     typeof navigator === "undefined" ||
     !("gpu" in navigator) ||
     !navigator.gpu
   ) {
-    setDiagnostic("webgpu", "unavailable");
-    setDiagnostic("adapter", "not requested");
     throw new Error(
       "WebGPU is not available in this browser. Use a recent Chromium-based browser with WebGPU enabled."
     );
   }
 
-  setDiagnostic("webgpu", "available");
-  setDiagnostic("adapter", "requesting");
-
   let adapter;
   try {
     adapter = await navigator.gpu.requestAdapter();
   } catch (error) {
-    setDiagnostic("adapter", "request failed");
     throw new Error(
       `WebGPU adapter request failed: ${extractErrorMessage(
         error,
@@ -670,13 +736,10 @@ async function runRuntimeCompatibilityPreflight() {
   }
 
   if (!adapter) {
-    setDiagnostic("adapter", "unavailable");
     throw new Error(
       "WebGPU is exposed by the browser, but no GPU adapter could be acquired. This usually means GPU access is blocked, unsupported, or the device lacks enough resources."
     );
   }
-
-  setDiagnostic("adapter", "acquired");
 }
 
 function buildInitializationTimeoutMessage() {
@@ -693,13 +756,11 @@ function updateInitializationStage(attemptId, stage) {
   }
 
   if (stage === "resolving-fileset") {
-    setDiagnostic("stage", "resolving-fileset");
     setStatus("Resolving MediaPipe fileset...", "working");
     return;
   }
 
   if (stage === "creating-inference") {
-    setDiagnostic("stage", "creating-inference");
     if (!isModelDownloadComplete) {
       setStatus("Streaming model into MediaPipe...", "working");
       return;
@@ -711,7 +772,6 @@ function updateInitializationStage(attemptId, stage) {
         if (attemptId !== initAttemptId) {
           return;
         }
-        setDiagnostic("stage", "creating-inference (long-running)");
         setStatus(
           "Still creating Gemma inference instance. Large local models can take significant time and may fail on unsupported GPUs or memory-constrained devices.",
           "working"
@@ -722,7 +782,6 @@ function updateInitializationStage(attemptId, stage) {
   }
 
   clearLongLoadTimer();
-  setDiagnostic("stage", "ready");
   setStatus("Model ready.", "ready");
 }
 
@@ -754,13 +813,276 @@ async function initializeModelWithGuards(attemptId, progressPromise) {
   }
 }
 
-async function buildAgent(attemptId) {
+async function buildSandbox() {
+  setSandboxState("starting", "Booting browser sandbox worker.");
+  const worker = new Worker(SANDBOX_WORKER_URL, {
+    name: "wasmsh-browser",
+  });
+
+  try {
+    const instance = await WasmshSandbox.createBrowserWorker({
+      assetBaseUrl: SANDBOX_ASSET_BASE_URL,
+      worker,
+      workingDirectory: "/workspace",
+      initialFiles: SEEDED_WORKSPACE_FILES,
+    });
+
+    setSandboxState("ready", "Sandbox worker is running.");
+    return instance;
+  } catch (error) {
+    worker.terminate();
+    throw error;
+  }
+}
+
+async function resetDemoState(options = {}) {
+  const { announce = false } = options;
+  initAttemptId += 1;
+  clearInitTimers();
+  abortModelDownload();
+
+  if (sandbox) {
+    await sandbox.stop().catch(() => {});
+  }
+
+  model = null;
+  sandbox = null;
+  deepAgent = null;
+  isInitializing = false;
+  isRunning = false;
+  todoState = [];
+
+  setStatus("Idle.", "idle");
+  setSandboxState("idle", "Sandbox not initialized.");
+  workspaceNode.textContent =
+    "Workspace unavailable until the browser sandbox is initialized.";
+  renderTodos([]);
+  resetDownloadProgress();
+  resetRunMetrics();
+  resetDebugLog();
+
+  if (announce) {
+    appendMessage(
+      "system",
+      "Reset",
+      "Local model and sandbox state were cleared. You can initialize again without reloading the page."
+    );
+  }
+
+  syncUi();
+}
+
+function parseTodosFromText(text) {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    return normalizeTodoItems(parsed?.todos ?? parsed);
+  } catch {
+    return null;
+  }
+}
+
+function handleToolCallChunks(namespace, toolCallChunks) {
+  const sourceKey = getSourceKey(namespace);
+
+  toolCallChunks.forEach((toolCall, index) => {
+    appendDebugLine(
+      `tool-call chunk from ${sourceKey}: ${toolCall.name ?? "pending"}`
+    );
+    const toolKey = `${sourceKey}:tool:${toolCall.id ?? toolCall.name ?? index}`;
+    const title = `Tool Call: ${toolCall.name ?? "pending"}`;
+    const card = getOrCreateStreamCard(toolKey, "tool", title);
+
+    if (toolCall.args) {
+      card.content.textContent += toolCall.args;
+      if (toolCall.name === "write_todos") {
+        const todos = parseTodosFromText(card.content.textContent);
+        if (todos) {
+          updateTodos(todos);
+        }
+      }
+    }
+  });
+}
+
+function handleUpdateChunk(data) {
+  appendDebugLine(
+    `update event with nodes: ${Object.keys(data ?? {}).join(", ") || "(none)"}`
+  );
+  for (const [nodeName, update] of Object.entries(data)) {
+    if (nodeName === "model_request") {
+      runMetrics.llmCalls += 1;
+      setRunMetric("llmCalls", String(runMetrics.llmCalls));
+    }
+
+    if (!update || !Array.isArray(update.messages)) {
+      continue;
+    }
+
+    const lastAiMessage = update.messages.filter(AIMessage.isInstance).at(-1);
+    if (!lastAiMessage?.tool_calls?.length) {
+      continue;
+    }
+
+    for (const toolCall of lastAiMessage.tool_calls) {
+      if (toolCall.name === "write_todos") {
+        updateTodos(toolCall.args?.todos);
+      }
+    }
+  }
+}
+
+function handleSingleMessageChunk(namespace, message) {
+  const sourceKey = getSourceKey(namespace);
+  const sourceLabel = getSourceLabel(sourceKey);
+  appendDebugLine(
+    `message event from ${sourceKey}: ${summarizeMessageForDebug(message)}`
+  );
+
+  const toolCallChunks = getToolCallChunks(message);
+  if (
+    (AIMessageChunk.isInstance(message) || toolCallChunks.length > 0) &&
+    toolCallChunks.length
+  ) {
+    handleToolCallChunks(namespace, toolCallChunks);
+  }
+
+  if (isToolMessageLike(message)) {
+    const body = getMessageText(message) || "(empty tool result)";
+    appendDebugLine(
+      `tool result from ${sourceKey}: ${message.name ?? "tool"} (${body.length} chars)`
+    );
+    appendMessage("tool", `Tool Result: ${message.name ?? "tool"}`, body);
+    if (message.name === "write_todos") {
+      const todos = parseTodosFromText(body);
+      if (todos) {
+        updateTodos(todos);
+      }
+    }
+    return;
+  }
+
+  const text = getMessageText(message);
+  if (!text) {
+    appendDebugLine(`message from ${sourceKey} had no visible text`);
+    return;
+  }
+
+  appendDebugLine(
+    `assistant text from ${sourceKey}: ${JSON.stringify(text.slice(0, 160))}`
+  );
+
+  const card = getOrCreateStreamCard(
+    `${sourceKey}:assistant`,
+    "assistant",
+    sourceLabel
+  );
+  card.content.textContent += text;
+
+  const now = performance.now();
+  if (!runMetrics.firstTokenAt) {
+    runMetrics.firstTokenAt = now;
+  }
+  runMetrics.lastTokenAt = now;
+  runMetrics.outputText += text;
+}
+
+function handleMessageChunk(namespace, data) {
+  if (!Array.isArray(data)) {
+    return;
+  }
+
+  for (const message of data) {
+    handleSingleMessageChunk(namespace, message);
+  }
+}
+
+async function finalizeRunMetrics() {
+  if (!model) {
+    resetRunMetrics();
+    return;
+  }
+
+  if (runMetrics.outputText) {
+    runMetrics.outputTokens = await model.getNumTokens(runMetrics.outputText);
+  } else {
+    runMetrics.outputTokens = 0;
+  }
+
+  const startedAt = runMetrics.firstTokenAt || runMetrics.startedAt;
+  const endedAt = runMetrics.lastTokenAt || performance.now();
+  const elapsedSeconds =
+    startedAt && endedAt > startedAt ? (endedAt - startedAt) / 1000 : 0;
+
+  runMetrics.tokenRate =
+    elapsedSeconds > 0 ? runMetrics.outputTokens / elapsedSeconds : 0;
+
+  setRunMetric("outputTokens", String(runMetrics.outputTokens));
+  setRunMetric("tokenRate", formatTokenRate(runMetrics.tokenRate));
+  setRunMetric("llmCalls", String(runMetrics.llmCalls));
+}
+
+async function runDeepAgent(input) {
+  resetStreamCards();
+  runMetrics.startedAt = performance.now();
+  setSandboxState("running", "Sandbox-backed deep agent is executing.");
+  appendDebugLine(`run started: ${JSON.stringify(input)}`);
+
+  const stream = await deepAgent.stream(
+    {
+      messages: [new HumanMessage(input)],
+    },
+    {
+      streamMode: ["updates", "messages"],
+      subgraphs: true,
+    }
+  );
+
+  for await (const [namespace, mode, data] of stream) {
+    appendDebugLine(
+      `stream event mode=${mode} namespace=${Array.isArray(namespace) ? namespace.join(" > ") : String(namespace)}`
+    );
+    if (mode === "updates") {
+      handleUpdateChunk(data);
+      continue;
+    }
+
+    if (mode === "messages") {
+      handleMessageChunk(namespace, data);
+    }
+  }
+
+  appendDebugLine("stream completed");
+  if (!runMetrics.outputText.trim()) {
+    appendDebugLine("run completed without visible assistant text");
+  }
+
+  await finalizeRunMetrics();
+  await refreshWorkspacePanel();
+  setSandboxState("ready", "Sandbox worker is running.");
+}
+
+async function buildDeepAgent(attemptId) {
   const modelAsset = await resolveModelAssetPath();
-  const wasmAsset = await resolveWasmAsset();
+  const mediapipeRuntime = await resolveStaticAsset(
+    WASM_ENTRYPOINT,
+    "MediaPipe runtime asset"
+  );
+  const sandboxWorker = await resolveStaticAsset(
+    SANDBOX_WORKER_URL,
+    "wasmsh worker asset"
+  );
+  const sandboxLibrary = await resolveStaticAsset(
+    SANDBOX_LIB_HEALTHCHECK,
+    "wasmsh library asset"
+  );
+
   validateModelAsset(modelAsset);
   await runRuntimeCompatibilityPreflight();
   throwIfAttemptStale(attemptId);
-  setDiagnostic("modelUrl", modelAsset.path);
 
   appendMessage(
     "system",
@@ -769,10 +1091,10 @@ async function buildAgent(attemptId) {
       `Resolved model URL: ${modelAsset.path}`,
       `Content-Type: ${modelAsset.contentType}`,
       `Content-Length: ${formatBytes(modelAsset.contentLength)}`,
-      `Resolved WASM runtime: ${wasmAsset.path}`,
-      `WASM Content-Type: ${wasmAsset.contentType}`,
-      `WebGPU: ${diagnostics.webgpu}`,
-      `Adapter: ${diagnostics.adapter}`,
+      `Resolved MediaPipe runtime: ${mediapipeRuntime.path}`,
+      `Resolved wasmsh worker: ${sandboxWorker.path}`,
+      `Resolved wasmsh library: ${sandboxLibrary.path}`,
+      `Sandbox assets: ${SANDBOX_ASSET_BASE_URL}`,
       "Expected size is roughly 2.0 GB for the real Gemma 4 E2B web model.",
     ].join("\n")
   );
@@ -787,13 +1109,12 @@ async function buildAgent(attemptId) {
     wasmRoot: WASM_ROOT,
     modelAssetPath: modelAsset.path,
     modelAssetBuffer,
-    maxTokens: 2048,
+    maxTokens: MODEL_MAX_TOKENS,
     temperature: 0.2,
     topK: 40,
     randomSeed: 101,
   });
 
-  setDiagnostic("stage", "initializing");
   setStatus("Initializing MediaPipe fileset...", "working");
   await Promise.all([
     initializeModelWithGuards(attemptId, progressPromise),
@@ -801,32 +1122,24 @@ async function buildAgent(attemptId) {
   ]);
   throwIfAttemptStale(attemptId);
 
-  const tools = [weatherTool, localTimeTool, calculatorTool];
-  const prompt = ChatPromptTemplate.fromMessages([
-    [
-      "system",
-      [
-        "You are a concise browser agent running fully on-device.",
-        "Use tools whenever they improve accuracy.",
-        "When tools are used, synthesize their outputs into a short direct answer.",
-      ].join(" "),
-    ],
-    ["human", "{input}"],
-    ["placeholder", "{agent_scratchpad}"],
-  ]);
-
-  const agent = await createToolCallingAgent({
-    llm: model,
-    tools,
-    prompt,
-  });
-
+  sandbox = await buildSandbox();
   throwIfAttemptStale(attemptId);
-  agentExecutor = new AgentExecutor({
-    agent,
-    tools,
-    returnIntermediateSteps: true,
+
+  deepAgent = createDeepAgent({
+    model,
+    backend: sandbox,
+    systemPrompt: [
+      "You are a browser-local coding and analysis assistant running fully on-device.",
+      "Work inside /workspace and prefer using the available filesystem or execute tools before guessing.",
+      "Use write_todos for non-trivial tasks, especially if they involve multiple file or command steps.",
+      "Use shell or Python when calculations or file transformations matter.",
+      "Keep the final answer concise and mention any files you created or changed.",
+    ].join(" "),
+    name: "gemma-browser-lab",
   });
+
+  await refreshWorkspacePanel();
+  setSandboxState("ready", "Sandbox worker is running.");
 }
 
 initButton.addEventListener("click", async () => {
@@ -840,15 +1153,17 @@ initButton.addEventListener("click", async () => {
   syncUi();
 
   try {
-    await buildAgent(attemptId);
+    await buildDeepAgent(attemptId);
     if (attemptId !== initAttemptId) {
       return;
     }
+
     appendMessage(
       "system",
       "Init",
-      "Model initialized. The local tool-calling agent is ready."
+      "Model initialized. The browser deep agent can now plan, inspect /workspace, edit files, and run shell or Python inside the wasm sandbox."
     );
+    setStatus("Model and sandbox ready.", "ready");
   } catch (error) {
     if (attemptId !== initAttemptId && error?.name === "AbortError") {
       return;
@@ -861,11 +1176,15 @@ initButton.addEventListener("click", async () => {
     initAttemptId += 1;
     clearInitTimers();
     abortModelDownload();
-    setStatus(message, "error");
-    setDiagnostic("stage", "failed");
-    appendMessage("error", "Initialization Error", message);
+    if (sandbox) {
+      await sandbox.stop().catch(() => {});
+      sandbox = null;
+    }
     model = null;
-    agentExecutor = null;
+    deepAgent = null;
+    setSandboxState("error", message);
+    setStatus(message, "error");
+    appendMessage("error", "Initialization Error", message);
   } finally {
     if (attemptId === initAttemptId) {
       isInitializing = false;
@@ -874,64 +1193,44 @@ initButton.addEventListener("click", async () => {
   }
 });
 
-resetButton.addEventListener("click", () => {
+resetButton.addEventListener("click", async () => {
   if (isRunning) {
     return;
   }
 
-  resetDemoState({
+  await resetDemoState({
     announce:
       model !== null ||
-      agentExecutor !== null ||
+      deepAgent !== null ||
+      sandbox !== null ||
       statusNode.dataset.mode === "error",
   });
 });
 
 sendButton.addEventListener("click", async () => {
   const input = promptInput.value.trim();
-  if (!input || !agentExecutor || isRunning) {
+  if (!input || !deepAgent || isRunning) {
     return;
   }
 
   isRunning = true;
   resetRunMetrics();
-  runMetrics.startedAt = performance.now();
   syncUi();
   appendMessage("user", "User", input);
   promptInput.value = "";
-  setStatus("Running agent...", "working");
+  setStatus("Running browser deep agent...", "working");
 
   try {
-    const result = await agentExecutor.invoke(
-      { input },
-      { callbacks: [createRunMetricsHandler()] }
-    );
-
-    await finalizeRunMetrics();
-
-    for (const step of result.intermediateSteps ?? []) {
-      appendMessage(
-        "tool",
-        `Tool: ${step.action.tool}`,
-        JSON.stringify(
-          {
-            toolInput: step.action.toolInput,
-            observation: step.observation,
-          },
-          null,
-          2
-        )
-      );
-    }
-
-    appendMessage("assistant", "Assistant", result.output ?? "(empty output)");
+    await runDeepAgent(input);
     setStatus(
       `Model ready. Last run: ${formatTokenRate(runMetrics.tokenRate)} tok/s.`,
       "ready"
     );
   } catch (error) {
     const message = extractErrorMessage(error, "Unknown agent error.");
+    appendDebugLine(`run failed: ${message}`);
     appendMessage("error", "Agent Error", message);
+    setSandboxState("error", message);
     setStatus(message, "error");
   } finally {
     isRunning = false;
@@ -946,8 +1245,11 @@ promptInput.addEventListener("keydown", (event) => {
   }
 });
 
+renderTodos([]);
+renderSandboxPanel();
+workspaceNode.textContent =
+  "Workspace unavailable until the browser sandbox is initialized.";
 syncUi();
 setStatus("Idle.", "idle");
-setDiagnostic("wasmRoot", WASM_ROOT);
 resetDownloadProgress();
 resetRunMetrics();

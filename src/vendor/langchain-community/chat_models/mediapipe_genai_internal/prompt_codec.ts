@@ -61,12 +61,12 @@ export type RenderedPromptPart =
 export type RenderedPrompt = string | RenderedPromptPart[];
 
 export interface MessageContentParts {
+  /** All text concatenated (for text-only rendering). */
   text: string;
+  /** Ordered parts preserving original interleaving of text and media. */
+  orderedParts: RenderedPromptPart[];
+  /** Whether any non-text media parts are present. */
   hasMedia: boolean;
-  mediaParts: Array<{ imageSource: string } | { audioSource: string }>;
-  orderedParts: Array<
-    string | { imageSource: string } | { audioSource: string }
-  >;
 }
 
 export function extractVisibleText(rawText: string): string {
@@ -116,15 +116,14 @@ export function getMessageContentParts(
   if (typeof message.content === "string") {
     return {
       text: message.content,
-      hasMedia: false,
-      mediaParts: [],
       orderedParts: [message.content],
+      hasMedia: false,
     };
   }
 
   const textParts: string[] = [];
-  const mediaParts: MessageContentParts["mediaParts"] = [];
-  const orderedParts: MessageContentParts["orderedParts"] = [];
+  const orderedParts: RenderedPromptPart[] = [];
+  let hasMedia = false;
 
   for (const part of message.content) {
     if (typeof part === "string") {
@@ -137,9 +136,8 @@ export function getMessageContentParts(
     }
 
     if (part.type === "text" && "text" in part) {
-      const text = part.text as string;
-      textParts.push(text);
-      orderedParts.push(text);
+      textParts.push(part.text as string);
+      orderedParts.push(part.text as string);
     } else if (part.type === "image_url" && "image_url" in part) {
       const imageUrl = part.image_url;
       const url =
@@ -151,26 +149,16 @@ export function getMessageContentParts(
             ? (imageUrl.url as string)
             : undefined;
       if (url) {
-        const mediaPart = { imageSource: url };
-        mediaParts.push(mediaPart);
-        orderedParts.push(mediaPart);
+        orderedParts.push({ imageSource: url });
+        hasMedia = true;
+      } else {
+        console.warn(
+          `ChatMediaPipeGenAI: image_url content part has no extractable URL and was ignored.`
+        );
       }
     } else if (part.type === "input_audio" && "input_audio" in part) {
       const audio = part.input_audio;
-      if (typeof audio === "string") {
-        const mediaPart = { audioSource: audio };
-        mediaParts.push(mediaPart);
-        orderedParts.push(mediaPart);
-      } else if (
-        typeof audio === "object" &&
-        audio !== null &&
-        "url" in audio &&
-        typeof audio.url === "string"
-      ) {
-        const mediaPart = { audioSource: audio.url };
-        mediaParts.push(mediaPart);
-        orderedParts.push(mediaPart);
-      } else if (
+      if (
         typeof audio === "object" &&
         audio !== null &&
         "data" in audio &&
@@ -180,21 +168,24 @@ export function getMessageContentParts(
           "format" in audio && typeof audio.format === "string"
             ? audio.format
             : "wav";
-        const mediaPart = {
+        orderedParts.push({
           audioSource: `data:audio/${format};base64,${audio.data}`,
-        };
-        mediaParts.push(mediaPart);
-        orderedParts.push(mediaPart);
+        });
+        hasMedia = true;
+      } else {
+        console.warn(
+          `ChatMediaPipeGenAI: input_audio content part is malformed (missing "data" string) and was ignored.`
+        );
       }
+    } else if (part.type !== "text") {
+      console.warn(
+        `ChatMediaPipeGenAI: Unsupported content part type "${String(part.type)}" was ignored. ` +
+          `Supported types: "text", "image_url", "input_audio".`
+      );
     }
   }
 
-  return {
-    text: textParts.join(""),
-    hasMedia: mediaParts.length > 0,
-    mediaParts,
-    orderedParts,
-  };
+  return { text: textParts.join(""), orderedParts, hasMedia };
 }
 
 export function stripHistoricalThoughts(
@@ -321,17 +312,7 @@ export function serializeGemmaToolCall(toolCall: {
   name: string;
   arguments: unknown;
 }): string {
-  const body =
-    isPlainObject(toolCall.arguments) && !("id" in toolCall.arguments)
-      ? omitUndefined({
-          id: toolCall.id,
-          ...toolCall.arguments,
-        })
-      : omitUndefined({
-          id: toolCall.id,
-          arguments: toolCall.arguments,
-        });
-
+  const body = buildGemmaPayload(toolCall.id, toolCall.arguments, "arguments");
   return `call:${toolCall.name}${serializeGemmaObject(body)}`;
 }
 
@@ -341,17 +322,11 @@ export function serializeGemmaToolResponse(response: {
   content: string;
 }): string {
   const parsedContent = tryParseJson(response.content);
-  const body =
-    isPlainObject(parsedContent) && !("id" in parsedContent)
-      ? omitUndefined({
-          id: response.id,
-          ...parsedContent,
-        })
-      : omitUndefined({
-          id: response.id,
-          content: parsedContent ?? response.content,
-        });
-
+  const body = buildGemmaPayload(
+    response.id,
+    parsedContent ?? response.content,
+    "content"
+  );
   return `response:${response.name}${serializeGemmaObject(body)}`;
 }
 
@@ -441,6 +416,8 @@ export function removeTaggedBlocks(
     output += text.slice(cursor, start);
     const end = text.indexOf(closeTag, start + openTag.length);
     if (end === -1) {
+      // No closing tag — during streaming this means the model is mid-block.
+      // Drop the partial block so it doesn't appear in visible text.
       break;
     }
     cursor = end + closeTag.length;
@@ -590,13 +567,33 @@ function escapeGemmaString(value: string): string {
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+    .replace(/\t/g, "\\t")
+    .replace(/<\|"\|>/g, '<|\\"|>')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, (ch) =>
+      `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`
+    );
 }
 
 function toJsonText(text: string): string {
-  return text
-    .replaceAll(GEMMA_STRING_DELIMITER, '"')
-    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+  // Split on the Gemma string delimiter to isolate structural vs string regions.
+  // Even-indexed segments are structural (keys, braces, commas).
+  // Odd-indexed segments are string contents — escape them as JSON string bodies.
+  const segments = text.split(GEMMA_STRING_DELIMITER);
+  for (let i = 0; i < segments.length; i += 2) {
+    segments[i] = segments[i].replace(
+      /([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g,
+      '$1"$2"$3'
+    );
+  }
+  for (let i = 1; i < segments.length; i += 2) {
+    segments[i] = segments[i]
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t");
+  }
+  return segments.join('"');
 }
 
 function tryParseJson(text: string): unknown {
@@ -605,6 +602,19 @@ function tryParseJson(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+// If data is a plain object without an "id" key, spread its fields alongside
+// id at the top level (Gemma's compact form). Otherwise wrap under fallbackKey.
+function buildGemmaPayload(
+  id: string | undefined,
+  data: unknown,
+  fallbackKey: string
+): Record<string, unknown> {
+  if (isPlainObject(data) && !("id" in data)) {
+    return omitUndefined({ id, ...data });
+  }
+  return omitUndefined({ id, [fallbackKey]: data });
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

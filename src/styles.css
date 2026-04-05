@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   --bg: #f4efe6;
-  --panel: rgba(255, 250, 241, 0.88);
+  --panel: rgba(255, 250, 241, 0.9);
   --ink: #1a1713;
   --muted: #655b4d;
   --line: rgba(38, 30, 20, 0.14);
@@ -10,6 +10,7 @@
   --tool: #b98a2f;
   --user: #275f7a;
   --error: #b03b2e;
+  --ready: #2f6f51;
   --shadow: 0 20px 50px rgba(56, 34, 20, 0.12);
   font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
 }
@@ -23,16 +24,8 @@ body {
   min-height: 100vh;
   color: var(--ink);
   background:
-    radial-gradient(
-      circle at top left,
-      rgba(205, 144, 90, 0.24),
-      transparent 32%
-    ),
-    radial-gradient(
-      circle at bottom right,
-      rgba(60, 108, 125, 0.18),
-      transparent 26%
-    ),
+    radial-gradient(circle at top left, rgba(205, 144, 90, 0.24), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(60, 108, 125, 0.18), transparent 26%),
     linear-gradient(180deg, #f7f1e9 0%, #efe6da 100%);
 }
 
@@ -44,7 +37,7 @@ textarea {
 
 .shell {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 310px minmax(0, 1fr);
   gap: 20px;
   min-height: 100vh;
   padding: 20px;
@@ -65,20 +58,6 @@ textarea {
   padding: 24px;
 }
 
-.controls {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.init-card {
-  margin-bottom: 14px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.5);
-}
-
 .eyebrow {
   margin: 0 0 8px;
   color: var(--accent);
@@ -90,8 +69,8 @@ textarea {
 
 .intro h1 {
   margin: 0;
-  font-size: 2.25rem;
-  line-height: 0.96;
+  font-size: 2.15rem;
+  line-height: 0.98;
 }
 
 .lede {
@@ -110,11 +89,16 @@ textarea {
   grid-template-columns: 1fr;
 }
 
+.facts div,
+.info-panel,
+.init-card {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.5);
+}
+
 .facts div {
   padding: 10px 12px;
-  border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.45);
 }
 
 .facts dt {
@@ -130,19 +114,43 @@ textarea {
   font-size: 0.88rem;
 }
 
+.init-card,
+.info-panel {
+  border-radius: 16px;
+}
+
+.init-card {
+  margin-bottom: 14px;
+  padding: 16px;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .workspace {
   padding: 18px;
 }
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
   min-height: calc(100vh - 40px);
 }
 
 .transcript-wrap {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 0;
+}
+
+.side-rail {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(220px, 1fr);
   gap: 14px;
   min-height: 0;
 }
@@ -155,13 +163,14 @@ textarea {
   padding: 4px 4px 0;
 }
 
-.section-head h2 {
+.section-head h2,
+.info-panel h2 {
   margin: 0;
-  font-size: 1.35rem;
+  font-size: 1.1rem;
 }
 
 .section-copy {
-  max-width: 320px;
+  max-width: 360px;
   margin: 0;
   color: var(--muted);
   font-size: 0.92rem;
@@ -210,14 +219,13 @@ textarea {
   color: var(--error);
 }
 
-.compact-card {
-  padding: 16px 18px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.46);
+.debug-log {
+  min-height: 220px;
+  max-height: 360px;
+  overflow: auto;
 }
 
-.composer {
+.compact-card {
   padding: 0;
   border: 0;
   background: transparent;
@@ -240,7 +248,7 @@ textarea {
   padding: 13px 14px;
   font-size: 0.94rem;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 textarea:focus {
@@ -258,14 +266,10 @@ button {
   border: 0;
   border-radius: 999px;
   padding: 10px 16px;
-  font: inherit;
-  font-size: 0.92rem;
   font-weight: 700;
+  font-size: 0.96rem;
   cursor: pointer;
-  transition:
-    transform 160ms ease,
-    background 160ms ease,
-    opacity 160ms ease;
+  transition: transform 120ms ease, opacity 120ms ease;
 }
 
 button:hover:not(:disabled) {
@@ -277,62 +281,75 @@ button:disabled {
   opacity: 0.55;
 }
 
-.secondary {
+button.primary {
+  color: #fff8f1;
+  background: linear-gradient(135deg, #c6896d, var(--accent));
+}
+
+button.secondary {
   color: var(--ink);
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--line);
 }
 
-.primary {
-  color: #fff7f1;
-  background: linear-gradient(
-    135deg,
-    var(--accent) 0%,
-    var(--accent-strong) 100%
-  );
-}
-
 .status {
-  margin: 12px 0 0;
+  min-height: 44px;
+  margin: 14px 0 10px;
   color: var(--muted);
   line-height: 1.45;
-}
-
-.status[data-mode="ready"] {
-  color: #286247;
 }
 
 .status[data-mode="error"] {
   color: var(--error);
 }
 
-.info-panel {
-  margin-top: 14px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.5);
-  padding: 14px;
+.status[data-mode="ready"] {
+  color: var(--ready);
 }
 
-.info-panel h2 {
-  margin: 0 0 12px;
-  font-size: 0.84rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+progress {
+  width: 100%;
+  height: 16px;
+  margin: 0 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(38, 30, 20, 0.08);
+}
+
+progress::-webkit-progress-bar {
+  background: rgba(38, 30, 20, 0.08);
+}
+
+progress::-webkit-progress-value {
+  background: linear-gradient(90deg, #4b86d4, #1f77f0);
+  border-radius: 999px;
+}
+
+progress::-moz-progress-bar {
+  background: linear-gradient(90deg, #4b86d4, #1f77f0);
+  border-radius: 999px;
+}
+
+.download-status {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.info-panel {
+  padding: 14px 15px;
+}
+
+.metrics-panel {
+  margin-top: 14px;
 }
 
 .diagnostics-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.diagnostics-grid div {
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.48);
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  margin: 12px 0 0;
 }
 
 .diagnostics-grid .wide {
@@ -340,41 +357,64 @@ button:disabled {
 }
 
 .diagnostics-grid dt {
-  margin-bottom: 5px;
+  margin-bottom: 4px;
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .diagnostics-grid dd {
   margin: 0;
-  line-height: 1.45;
+}
+
+.panel-pre {
+  margin: 12px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.5;
 }
 
-.diagnostics-grid code {
-  font-size: 0.82rem;
+.todo-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
 }
 
-.info-panel progress {
-  width: 100%;
-  height: 12px;
-  margin: 14px 0 0;
-  accent-color: var(--accent);
+.todo-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.52);
 }
 
-.download-status {
-  margin: 10px 0 0;
+.todo-status {
   color: var(--muted);
-  line-height: 1.4;
-  font-size: 0.92rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-@media (max-width: 920px) {
+.todo-item[data-status*="completed"] .todo-status {
+  color: var(--ready);
+}
+
+.todo-item[data-status*="in_progress"] .todo-status {
+  color: var(--tool);
+}
+
+.todo-text {
+  line-height: 1.45;
+}
+
+@media (max-width: 1080px) {
   .shell {
     grid-template-columns: 1fr;
-    padding: 14px;
   }
 
   .intro {
@@ -383,25 +423,42 @@ button:disabled {
 
   .workspace-grid {
     grid-template-columns: 1fr;
-    min-height: auto;
   }
 
-  .transcript-wrap {
-    grid-template-rows: auto minmax(280px, 48vh) auto;
+  .side-rail {
+    grid-template-columns: 1fr;
   }
 
   .section-head {
-    display: grid;
-    gap: 8px;
+    flex-direction: column;
+    align-items: start;
   }
 
   .section-copy {
     max-width: none;
     text-align: left;
   }
+}
 
-  .compact-facts,
-  .diagnostics-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 680px) {
+  .shell {
+    padding: 14px;
+    gap: 14px;
+  }
+
+  .workspace {
+    padding: 14px;
+  }
+
+  .intro {
+    padding: 18px;
+  }
+
+  .controls {
+    flex-direction: column;
+  }
+
+  button {
+    width: 100%;
   }
 }

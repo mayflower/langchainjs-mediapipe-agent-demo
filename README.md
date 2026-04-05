@@ -1,13 +1,16 @@
-# MediaPipe LangChain Agent Demo
+# Gemma Browser Deep Agent Demo
 
-This repository is a small standalone browser demo for a LangChain tool-calling
-agent running on top of MediaPipe Tasks GenAI and Gemma 4.
+This repository is a standalone browser demo for a real deep agent running on
+top of MediaPipe Tasks GenAI, Gemma 4, `deepagentsjs`, and a browser-hosted
+`wasmsh` sandbox.
 
-It does three things:
+It does four things:
 
 - initializes `ChatMediaPipeGenAI` in the browser
-- runs a real LangChain agent via `@langchain/classic/agents`
-- exposes live browser-side tools for weather, time, and arithmetic
+- downloads the model once and passes the same bytes into MediaPipe init
+- starts a browser sandbox rooted at `/workspace`
+- runs a `deepagentsjs` agent that can inspect files, edit files, and execute
+  shell or Python inside that sandbox
 
 ## Requirements
 
@@ -36,7 +39,14 @@ pnpm run sync:assets
 pnpm start
 ```
 
-4. Open [http://127.0.0.1:4173](http://127.0.0.1:4173).
+4. Open the local Vite URL shown by `pnpm start`.
+
+5. Optional: refresh the vendored browser agent sources after updating the
+   source branches:
+
+```bash
+pnpm run sync:vendor
+```
 
 ## Runtime profile
 
@@ -44,7 +54,7 @@ The demo uses:
 
 - `wasmRoot: /vendor/mediapipe/tasks-genai/wasm`
 - `modelAssetPath: /models/gemma/gemma-4-E2B-it-web.task`
-- `maxTokens: 2048`
+- `maxTokens: 12288`
 - `topK: 40`
 - `temperature: 0.2`
 - `randomSeed: 101`
@@ -53,6 +63,12 @@ The demo uses:
 
 - The app runs fully in the browser. The dev server only serves files.
 - LangSmith is intentionally shimmed out for the demo.
-- The weather tool uses live Open-Meteo browser fetches.
 - The repository includes `public/models/gemma/gemma-4-E2B-it-web.task`.
-- `Dockerfile` builds a static image, and `deploy/helm/deepagents` contains the chart used for Kubernetes deployment.
+- `pnpm run sync:vendor` refreshes vendored browser sources from:
+  - `/Users/johann/src/ml/deepagentsjs` on `feat/wasmsh-sandbox`
+- `src/vendor/wasmsh/index.js` is now just a thin demo adapter over the
+  published browser-safe `@mayflowergmbh/wasmsh-pyodide` entry.
+- The MediaPipe adapter sources are vendored from:
+  - `/Users/johann/src/ml/langchainjs-community` on `feature/mediapipe-genai-clean`
+- `Dockerfile` builds a static image, and `deploy/helm/deepagents` contains
+  the chart used for Kubernetes deployment.

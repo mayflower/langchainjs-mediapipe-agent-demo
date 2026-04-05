@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0"
     />
-    <title>MediaPipe LangChain Agent Demo</title>
+    <title>Gemma Browser Deep Agent Demo</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -15,7 +15,7 @@
         <p class="eyebrow">Standalone Demo</p>
         <h1>Gemma 4 Browser Lab</h1>
         <p class="lede">
-          Local LangChain agent running fully in the browser on top of
+          Local deep agent running fully in the browser on top of
           <code>@langchain/community/chat_models/mediapipe_genai</code>.
         </p>
 
@@ -26,11 +26,11 @@
           </div>
           <div>
             <dt>Runtime</dt>
-            <dd><code>WebGPU + MediaPipe</code></dd>
+            <dd><code>WebGPU + MediaPipe + wasmsh</code></dd>
           </div>
           <div>
             <dt>Agent</dt>
-            <dd><code>@langchain/classic</code></dd>
+            <dd><code>deepagentsjs</code></dd>
           </div>
         </dl>
 
@@ -73,15 +73,19 @@
                 <h2>Transcript</h2>
               </div>
               <p class="section-copy">
-                Use the tool-calling agent for weather, time, and math with the
-                current text-only Gemma 4 web model.
+                Initialize the model and sandbox, then ask the browser deep agent
+                to inspect files, edit code, or run shell/Python inside
+                <code>/workspace</code>.
               </p>
             </div>
 
             <section id="transcript" class="transcript" aria-live="polite">
               <article class="message system">
                 <h2>System</h2>
-                <p>Initialize the model, then run the local tool-calling agent.</p>
+                <p>
+                  Initialize the model, then ask the deep agent to inspect or modify
+                  the seeded workspace with its local filesystem and execute tools.
+                </p>
               </article>
             </section>
 
@@ -90,13 +94,35 @@
               <textarea
                 id="prompt-input"
                 rows="3"
-                placeholder="Example: What's the weather and local time in Berlin, and what is 17 * 6?"
+                placeholder="Example: Inspect /workspace, summarize the CSV, and update report.py so it prints a friendlier sentence."
               ></textarea>
               <div class="actions">
                 <button id="send-button" class="primary" disabled>Run Agent</button>
               </div>
             </section>
           </section>
+
+          <aside class="side-rail">
+            <section class="info-panel">
+              <h2>Plan / Todos</h2>
+              <div id="todos-panel" class="todo-list"></div>
+            </section>
+
+            <section class="info-panel">
+              <h2>Workspace</h2>
+              <pre id="workspace-panel" class="panel-pre"></pre>
+            </section>
+
+            <section class="info-panel">
+              <h2>Sandbox</h2>
+              <pre id="sandbox-panel" class="panel-pre"></pre>
+            </section>
+
+            <section class="info-panel">
+              <h2>Debug Log</h2>
+              <pre id="debug-panel" class="panel-pre debug-log"></pre>
+            </section>
+          </aside>
         </div>
       </main>
     </div>

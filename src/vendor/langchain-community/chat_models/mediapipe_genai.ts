@@ -640,12 +640,15 @@ export class ChatMediaPipeGenAI extends BaseChatModel<ChatMediaPipeGenAICallOpti
         content: parsedOutput.content,
         tool_calls: toolCalls,
         invalid_tool_calls: invalidToolCalls,
-        additional_kwargs:
-          rawToolCalls.length > 0
+        additional_kwargs: {
+          ...(rawToolCalls.length > 0
             ? {
                 tool_calls: rawToolCalls,
               }
-            : {},
+            : {}),
+          raw_response_preview: rawResponse.slice(0, 1000),
+          parsed_visible_text_preview: parsedOutput.visibleText.slice(0, 400),
+        },
       }),
     };
   }
@@ -674,9 +677,10 @@ export class ChatMediaPipeGenAI extends BaseChatModel<ChatMediaPipeGenAICallOpti
       throw new Error("ChatMediaPipeGenAI does not support stop sequences.");
     }
 
-    if (options?.signal) {
-      throw new Error(
-        "ChatMediaPipeGenAI does not support AbortSignal cancellation."
+    if (options?.signal?.aborted) {
+      throw new DOMException(
+        "The MediaPipe request was aborted before it started.",
+        "AbortError"
       );
     }
   }
