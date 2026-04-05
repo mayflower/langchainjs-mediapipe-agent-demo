@@ -278,6 +278,10 @@ function resetStreamCards() {
 }
 
 function getSourceKey(namespace) {
+  if (!Array.isArray(namespace)) {
+    return "main";
+  }
+
   const subagentNamespace = namespace.find((segment) =>
     segment.startsWith("tools:")
   );
@@ -913,6 +917,14 @@ function handleUpdateChunk(data) {
     `update event with nodes: ${Object.keys(data ?? {}).join(", ") || "(none)"}`
   );
   for (const [nodeName, update] of Object.entries(data)) {
+    const updateTodosValue = normalizeTodoItems(update?.todos);
+    if (updateTodosValue) {
+      appendDebugLine(
+        `todo state update from ${nodeName}: ${updateTodosValue.length} items`
+      );
+      updateTodos(updateTodosValue);
+    }
+
     if (nodeName === "model_request") {
       runMetrics.llmCalls += 1;
       setRunMetric("llmCalls", String(runMetrics.llmCalls));
@@ -932,6 +944,22 @@ function handleUpdateChunk(data) {
         updateTodos(toolCall.args?.todos);
       }
     }
+  }
+}
+
+function handleValueChunk(namespace, data) {
+  const sourceKey = getSourceKey(namespace);
+  const todos = normalizeTodoItems(data?.todos);
+
+  appendDebugLine(
+    `value event from ${sourceKey}: keys=${Object.keys(data ?? {}).join(", ") || "(none)"}`
+  );
+
+  if (todos) {
+    appendDebugLine(
+      `todo snapshot from ${sourceKey}: ${todos.length} items`
+    );
+    updateTodos(todos);
   }
 }
 
@@ -1036,7 +1064,7 @@ async function runDeepAgent(input) {
       messages: [new HumanMessage(input)],
     },
     {
-      streamMode: ["updates", "messages"],
+      streamMode: ["updates", "messages", "values"],
       subgraphs: true,
     }
   );
@@ -1052,6 +1080,11 @@ async function runDeepAgent(input) {
 
     if (mode === "messages") {
       handleMessageChunk(namespace, data);
+      continue;
+    }
+
+    if (mode === "values") {
+      handleValueChunk(namespace, data);
     }
   }
 
