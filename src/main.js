@@ -13,6 +13,9 @@ const resetButton = document.getElementById("reset-button");
 const sendButton = document.getElementById("send-button");
 const promptInput = document.getElementById("prompt-input");
 const statusNode = document.getElementById("status");
+const statusLineNode = statusNode.parentElement;
+const activityDetailNode = document.getElementById("activity-detail");
+const workspaceMainNode = document.getElementById("workspace-main");
 const transcript = document.getElementById("transcript");
 const todosNode = document.getElementById("todos-panel");
 const workspaceNode = document.getElementById("workspace-panel");
@@ -172,6 +175,24 @@ function extractErrorMessage(error, fallback) {
 function setStatus(text, mode = "idle") {
   statusNode.textContent = text;
   statusNode.dataset.mode = mode;
+  statusLineNode.dataset.mode = mode;
+  workspaceMainNode.setAttribute(
+    "aria-busy",
+    mode === "working" ? "true" : "false"
+  );
+  if (mode !== "working") {
+    setActivityDetail("");
+  }
+}
+
+let lastActivityDetail = "";
+function setActivityDetail(text) {
+  const next = text || "";
+  if (next === lastActivityDetail) {
+    return;
+  }
+  lastActivityDetail = next;
+  activityDetailNode.textContent = next;
 }
 
 function setRunMetric(key, value) {
@@ -956,6 +977,10 @@ function handleToolCallChunks(namespace, toolCallChunks) {
     const title = `Tool Call: ${toolCall.name ?? "pending"}`;
     const card = getOrCreateStreamCard(toolKey, "tool", title);
 
+    if (toolCall.name) {
+      setActivityDetail(`Calling tool: ${toolCall.name}`);
+    }
+
     if (toolCall.args) {
       card.content.textContent += toolCall.args;
       if (toolCall.name === "write_todos") {
@@ -984,6 +1009,7 @@ function handleUpdateChunk(data) {
     if (nodeName === "model_request") {
       runMetrics.llmCalls += 1;
       setRunMetric("llmCalls", String(runMetrics.llmCalls));
+      setActivityDetail(`Model request #${runMetrics.llmCalls}`);
     }
 
     if (!update || !Array.isArray(update.messages)) {
@@ -1040,6 +1066,7 @@ function handleSingleMessageChunk(namespace, message) {
       `tool result from ${sourceKey}: ${message.name ?? "tool"} (${body.length} chars)`
     );
     appendMessage("tool", `Tool Result: ${message.name ?? "tool"}`, body);
+    setActivityDetail(`Tool result: ${message.name ?? "tool"}`);
     if (message.name === "write_todos") {
       const todos = parseTodosFromText(body);
       if (todos) {
@@ -1072,6 +1099,17 @@ function handleSingleMessageChunk(namespace, message) {
   }
   runMetrics.lastTokenAt = now;
   runMetrics.outputText += text;
+
+  const elapsedSec = Math.max(
+    (now - (runMetrics.firstTokenAt || now)) / 1000,
+    0.001
+  );
+  // Cheap proxy: ~4 chars/token. Replaced with the exact tokenizer count at finalize.
+  const approxTokens = Math.round(runMetrics.outputText.length / 4);
+  const approxRate = approxTokens / elapsedSec;
+  setActivityDetail(
+    `Streaming response — ~${approxTokens} tok @ ${formatTokenRate(approxRate)} tok/s`
+  );
 }
 
 function handleMessageChunk(namespace, data) {
@@ -1114,6 +1152,7 @@ async function runDeepAgent(input) {
   runMetrics.startedAt = performance.now();
   setSandboxState("running", "Sandbox-backed deep agent is executing.");
   appendDebugLine(`run started: ${JSON.stringify(input)}`);
+  setActivityDetail("Starting agent loop...");
 
   const stream = await deepAgent.stream(
     {

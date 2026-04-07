@@ -45,7 +45,19 @@
               Reset State
             </button>
           </div>
-          <p id="status" class="status">Idle.</p>
+          <div class="status-line" data-mode="idle">
+            <span class="activity-indicator" aria-hidden="true">
+              <span class="activity-dot"></span>
+              <span class="activity-dot"></span>
+              <span class="activity-dot"></span>
+            </span>
+            <p id="status" class="status" aria-live="polite">Idle.</p>
+          </div>
+          <p
+            id="activity-detail"
+            class="activity-detail"
+            aria-live="polite"
+          ></p>
           <progress id="download-progress" max="1" value="0"></progress>
           <p id="download-status" class="download-status">Not started.</p>
         </section>
@@ -69,7 +81,7 @@
         </section>
       </aside>
 
-      <main class="panel workspace">
+      <main class="panel workspace" id="workspace-main" aria-busy="false">
         <div class="workspace-grid">
           <section class="transcript-wrap">
             <div class="section-head">
