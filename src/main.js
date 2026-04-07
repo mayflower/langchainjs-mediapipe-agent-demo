@@ -716,6 +716,47 @@ async function prepareModelAssetBuffer(modelAsset, attemptId) {
   };
 }
 
+function describeWebGPUPlatformHint() {
+  if (typeof navigator === "undefined") {
+    return "";
+  }
+
+  const uaData = navigator.userAgentData;
+  const rawPlatform = (navigator.platform || "").toLowerCase();
+  const ua = (navigator.userAgent || "").toLowerCase();
+  const isWindows =
+    uaData?.platform === "Windows" ||
+    rawPlatform.startsWith("win") ||
+    ua.includes("windows");
+  const isLinux =
+    uaData?.platform === "Linux" ||
+    rawPlatform.startsWith("linux") ||
+    (ua.includes("linux") && !ua.includes("android"));
+  const isArm =
+    uaData?.architecture === "arm" ||
+    ua.includes("arm64") ||
+    ua.includes("aarch64");
+
+  if (isWindows && isArm) {
+    return [
+      "Windows on ARM (Snapdragon X Elite / Copilot+ PCs) does not enable WebGPU by default in Chrome or Edge.",
+      "Open chrome://flags/#enable-unsafe-webgpu, set it to Enabled, and restart the browser.",
+      "Then verify at chrome://gpu that the WebGPU row reports 'Hardware accelerated'.",
+    ].join("\n");
+  }
+  if (isLinux) {
+    return [
+      "WebGPU on Linux is still gated behind a flag in Chrome stable.",
+      "Open chrome://flags/#enable-unsafe-webgpu and set it to Enabled (on older Chrome versions also enable chrome://flags/#enable-vulkan), then restart the browser.",
+      "Make sure 'Use graphics acceleration when available' is on under chrome://settings/system, and verify at chrome://gpu that the WebGPU row reports 'Hardware accelerated'.",
+    ].join("\n");
+  }
+  return [
+    "Open chrome://gpu and check the WebGPU row.",
+    "If it says 'Disabled' or 'Disabled via blocklist or the command line', enable chrome://flags/#enable-unsafe-webgpu and restart the browser.",
+  ].join("\n");
+}
+
 async function runRuntimeCompatibilityPreflight() {
   if (
     typeof navigator === "undefined" ||
@@ -741,7 +782,22 @@ async function runRuntimeCompatibilityPreflight() {
 
   if (!adapter) {
     throw new Error(
-      "WebGPU is exposed by the browser, but no GPU adapter could be acquired. This usually means GPU access is blocked, unsupported, or the device lacks enough resources."
+      [
+        "WebGPU is exposed by the browser, but no GPU adapter could be acquired.",
+        describeWebGPUPlatformHint(),
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+  }
+
+  if (!adapter.features.has("shader-f16")) {
+    throw new Error(
+      [
+        "Your GPU adapter does not expose the WebGPU 'shader-f16' feature, which the Gemma LLM Inference task requires for half-precision weights.",
+        "This is a known limitation on some GPU/driver combinations (notably Adreno on Windows-ARM and older Mesa drivers on Linux).",
+        "Try a different machine, update GPU drivers, or use a Chromium build with newer Dawn/Vulkan support.",
+      ].join("\n")
     );
   }
 }
